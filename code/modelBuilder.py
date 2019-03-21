@@ -21,11 +21,20 @@ class DiagBlock():
         self.cuda = cuda
         self.batchSize = batchSize
 
+    def simMat(self,imagePathList,foldName):
 
-    def detectDiagBlock(self,imagePathList,sceneNb=5):
+        def preprocc(x):
+            x = cv2.imread(x)
+            x = resize(x, (299, 299,3), anti_aliasing=True,mode="constant")
 
-        foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
-        print(foldName)
+            if self.cuda:
+                x = torch.tensor(x).cuda()
+            else:
+                x = torch.tensor(x)
+
+            x = x.permute(2,0,1).float().unsqueeze(0)
+
+            return x
 
         if not os.path.exists("../results/{}.csv".format(foldName)):
 
@@ -34,19 +43,6 @@ class DiagBlock():
                 if self.cuda:
                     self.incep = self.incep.cuda()
                 self.incep.eval()
-
-            def preprocc(x):
-                x = cv2.imread(x)
-                x = resize(x, (299, 299,3), anti_aliasing=True,mode="constant")
-
-                if self.cuda:
-                    x = torch.tensor(x).cuda()
-                else:
-                    x = torch.tensor(x)
-
-                x = x.permute(2,0,1).float().unsqueeze(0)
-
-                return x
 
             print("Computing features")
 
@@ -90,35 +86,14 @@ class DiagBlock():
 
             simMatrix = torch.tensor(np.genfromtxt("../results/{}.csv".format(foldName)))
 
-        print("Computing scene number")
+        return simMatrix
 
-        s = np.linalg.svd(simMatrix,compute_uv=False)
-        s = np.log(s[np.where(s > 1)])
-
-        H = np.array([len(s)-1,s[0]-s[len(s)-1]])
-        I = np.concatenate((s[:,np.newaxis],np.arange(len(s))[:,np.newaxis]),axis=1)
-
-        K = np.argmin((I*H).sum(axis=1))+1
-
-        print("Detecting {} scenes".format(K))
-
-        start = time.time()
-
-        N = len(imagePathList)
-        K = sceneNb
+    def getPossiblePValues(self,N,K):
         pMax = N*N
 
-        C = torch.zeros((N,K,pMax))
-        I = torch.zeros((N,K,pMax)).int()
-        P = torch.zeros((N,K,pMax))
-        G = torch.zeros(N)
+        if not os.path.exists("../results/possibP_N{}_K{}.csv".format(N,K)):
 
-        if self.cuda:
-            print("Putting tensors on cuda")
-            simMatrix = simMatrix.cuda()
-            C,I,P,G = C.cuda(),I.cuda(),P.cuda(),G.cuda()
-
-        if not os.path.exists("../results/B_N{}_K{}.csv".format(N,K)):
+            print("Computing possible values of p")
 
             #Indicates which value of p are possible
             B = torch.zeros((N,K,pMax)).byte()
@@ -172,46 +147,117 @@ class DiagBlock():
 
                         B[n-1,k,p-1] = precMat[:n,:p][(tens1==tens2)].any()
 
-            np.savetxt(B.view(B.size(0),-1).detach().cpu().numpy(),"../results/B_N{}_K{}.csv".format(N,K))
+            possibleValues = torch.nonzero(B)
 
-        possibleValues = torch.nonzero(B)
-        print(time.time()-start)
-        print(len(possibleValues),possibleValues,B.numel())
-        sys.exit(0)
+            np.savetxt("../results/possibP_N{}_K{}.csv".format(N,K),possibleValues.detach().cpu().numpy())
 
-        for n,k,p in possibleValues:
+        else:
 
-        #for k in range(1,K+1):
-        #    for n in range(N):
-        #        for p in range(pMax):
-            if k == 0:
-                C[n,0,p] = simMatrix[n:,n:].sum()/(p+(N-n+1)*(N-n+1)-N)
-                I[n,0,p] = N
-                P[n,0,p] = (N-n+1)*(N-n+1)
-            else:
+            possibleValues = torch.tensor(np.genfromtxt("../results/possibP_N{}_K{}.csv".format(N,K)))
+            print("Reading possible values of p")
 
-                i=n+1
-                while i<N-1 and p+(i-n+1)*(i-n+1)<pMax:
-                    a = p+(i-n+1)*(i-n+1)
-                    G[i] = simMatrix[n:i+1,n:i+1].sum()/(a+P[i+1,k-1,a]-N)
-                    i+=1
+        print(len(possibleValues),"values possible")
 
-                minimum,argmin = torch.min(G[n:i-1],dim=0)
+        return possibleValues.long()
 
-                C[n,k,p] = minimum
-                I[n,k,p] = argmin
+    def countScenes(self,simMatrix):
 
-                b = (I[n,k,p]-n+1)*(I[n,k,p]-n+1)
+        print("Number of scenes : ",end="")
 
-                P[n,k,p] = b+P[I[n,k,p]+1,k-1,p+b]
+        s = np.linalg.svd(simMatrix,compute_uv=False)
+        s = np.log(s[np.where(s > 1)])
+
+        H = np.array([len(s)-1,s[0]-s[len(s)-1]])
+        I = np.concatenate((s[:,np.newaxis],np.arange(len(s))[:,np.newaxis]),axis=1)
+
+        K = np.argmin((I*H).sum(axis=1))+1
+
+        print(K)
+        return K
+
+    def detectDiagBlock(self,imagePathList):
+
+        N = int(len(imagePathList))
+        pMax = N*N
+
+        print("Number of shots : ",N)
+
+        foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
+        simMatrix = self.simMat(imagePathList,foldName)
+
+        simMatrix = simMatrix[:N,:N]
+
+        K = self.countScenes(simMatrix)
+
+        possibleValues = self.getPossiblePValues(N,K)
+
+        C = torch.zeros((N,K,pMax))
+        I = torch.zeros((N,K,pMax))
+        P = torch.zeros((N,K,pMax))
+        G = torch.zeros(N-1)
+
+        C[:,:,:] = float("NaN")
+        I[:,:,:] = float("NaN")
+        P[:,:,:] = float("NaN")
+        G[:] = float("NaN")
+
+        if self.cuda:
+            print("Putting tensors on cuda")
+            simMatrix = simMatrix.cuda()
+            C,I,P,G = C.cuda(),I.cuda(),P.cuda(),G.cuda()
+
+        for k in range(K):
+            print("Computing for",k+1,"blocks over",K)
+            for n in range(1,N+1):
+                for p in range(1,pMax+1):
+
+                    if k == 0:
+
+                        C[n-1,0,p-1] = simMatrix[n:,n:].sum()/(p+(N-n+1)*(N-n+1)-N)
+                        I[n-1,0,p-1] = N
+                        P[n-1,0,p-1] = (N-n+1)*(N-n+1)
+
+                    else:
+
+                        G[:] = float("NaN")
+                        i=n
+                        a = p+(i-n+1)*(i-n+1)
+
+                        while i<N-(k+1) and a-1 < pMax:
+
+                            G[i-1] = simMatrix[n-1:i,n-1:i].sum()/(a+P[i,k-1,a-1]-N)+C[i,k-1,a-1]
+
+                            i+=1
+                            a = p+(i-n+1)*(i-n+1)
+
+                        if n < N-(k+1):
+
+                            G_val = G[n:i][G[n:i] > 0]
+
+                            if len(G_val) == 0:
+                                minimum,argmin = 0,0
+                            else:
+                                minimum,argmin = torch.min(G_val,dim=0)
+
+                            C[n-1,k,p-1] = minimum
+
+                            I[n-1,k,p-1] = argmin+n
+
+                            b = ((I[n-1,k,p-1]-n+1)*(I[n-1,k,p-1]-n+1)).long()
+
+                            if p+b-1 < P.size(2):
+                                P[n-1,k,p-1] = b+P[I[n-1,k,p-1].long(),k-1,p+b-1]
 
         P_tot = 0
-        sceneSplit = [0]
-        for i in range(1,K+1):
-            sceneSplit.append(I[sceneSplit[i-1]+1,K-i,P_tot])
-            P_tot += (sceneSplit[i]-sceneSplit[i-1])*(sceneSplit[i]-sceneSplit[i-1])
+        sceneSplits = [0]
 
-        print("Sanity check :",P_tot,P[1,K-1,0])
+        for i in range(1,K+1):
+            sceneSplits.append(I[sceneSplits[i-1],K-i,P_tot].long().item())
+            P_tot += (sceneSplits[i]-sceneSplits[i-1])*(sceneSplits[i]-sceneSplits[i-1])
+
+        np.savetxt("../results/{}_baseSplit.csv".format(foldName),np.array(sceneSplits))
+
+        print("Sanity check :",P_tot,P[0,K-1,0].item())
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
