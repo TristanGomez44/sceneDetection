@@ -92,6 +92,9 @@ class ArgReader():
         self.parser.add_argument('--epochs', type=int, metavar='N',
                             help='maximum number of epochs to train')
 
+        self.parser.add_argument('--feat', type=str, metavar='N',
+                            help='the net to use to produce feature for each shot')
+
         self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
                             help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
