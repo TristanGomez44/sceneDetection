@@ -105,8 +105,8 @@ class ArgReader():
         self.parser.add_argument('--log_interval', type=int, metavar='N',
                             help='how many epochs to train before logging training status')
 
-        self.parser.add_argument('--ind_id', type=int, metavar='IND_ID',
-                            help='the id of the individual')
+        self.parser.add_argument('--model_id', type=str, metavar='IND_ID',
+                            help='the id of the individual model')
         self.parser.add_argument('--exp_id', type=str, metavar='EXP_ID',
                             help='the id of the experience')
         self.parser.add_argument('--dataset', type=str, metavar='N',help='the dataset to use. Can be \'NETFLIX\', \'IRCCYN\' or \'VQEG\'.')
