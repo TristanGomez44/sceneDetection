@@ -151,7 +151,7 @@ class DiagBlock():
         print(K)
         return K
 
-    def detectDiagBlock(self,imagePathList):
+    def detectDiagBlock(self,imagePathList,exp_id,model_id):
 
         foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
         simMatrix = self.simMat(imagePathList,foldName)
@@ -230,7 +230,7 @@ class DiagBlock():
             sceneSplits.append(I[sceneSplits[i-1],K-i,P_tot].long().item())
             P_tot += (sceneSplits[i]-sceneSplits[i-1])*(sceneSplits[i]-sceneSplits[i-1])
 
-        np.savetxt("../results/{}_baseSplit.csv".format(foldName),np.array(sceneSplits))
+        np.savetxt("../results/{}/{}_{}.csv".format(exp_id,foldName,model_id),np.array(sceneSplits))
         print(sceneSplits)
         print("Sanity check :",P_tot,P[0,K-1,0].item())
 
@@ -246,6 +246,6 @@ def main():
 
     diagBlock = DiagBlock(cuda=True)
 
-    diagBlock.detectDiagBlock(imagePathList)
+    diagBlock.detectDiagBlock(imagePathList,"test_exp",1)
 if __name__ == "__main__":
     main()
