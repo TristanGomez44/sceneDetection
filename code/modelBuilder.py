@@ -1,5 +1,4 @@
 import sys
-import inceptionFeat
 from torchvision.models.inception import inception_v3
 import cv2
 import glob
@@ -13,13 +12,17 @@ plt.switch_backend('agg')
 import os
 import time
 
+import inceptionv3
+import googleNet
+
 class DiagBlock():
 
-    def __init__(self,cuda=True,batchSize=32):
-        self.incep = None
+    def __init__(self,cuda=True,batchSize=32,feat="inceptionv3"):
 
         self.cuda = cuda
         self.batchSize = batchSize
+        self.featModelName = feat
+        self.featModel = None
 
     def simMat(self,imagePathList,foldName):
 
@@ -38,11 +41,18 @@ class DiagBlock():
 
         if not os.path.exists("../results/{}.csv".format(foldName)):
 
-            if self.incep is None:
-                self.incep = inceptionFeat.inception_v3(pretrained=True)
+            if self.featModel is None:
+
+                if self.featModelName == "inceptionv3":
+                    self.featModel = inceptionv3.inception_v3(pretrained=True)
+                elif self.featModelName == "googLeNet":
+                    self.featModel = googleNet.googlenet(pretrained=True)
+                else:
+                    raise ValueError("Unkown model name :".format(self.feat))
+
                 if self.cuda:
-                    self.incep = self.incep.cuda()
-                self.incep.eval()
+                    self.featModel = self.featModel.cuda()
+                self.featModel.eval()
 
             print("Computing features")
 
@@ -58,7 +68,7 @@ class DiagBlock():
 
                 imageBatch = torch.cat(imageBatch)
 
-                featBatch = self.incep(imageBatch).detach()
+                featBatch = self.featModel(imageBatch).detach()
 
                 if feat is None:
                     feat = featBatch
@@ -164,7 +174,7 @@ class DiagBlock():
 
         simMatrix = simMatrix[:N,:N]
 
-        K = self.countScenes(simMatrix)
+        K = self.countScenes(simMatrix.cpu().numpy())
 
         C = torch.zeros((N,K,pMax))
         I = torch.zeros((N,K,pMax))
@@ -196,7 +206,7 @@ class DiagBlock():
                         else:
 
                             G[:] = float("NaN")
-                            i=n.item()
+                            i=n
                             a = p+(i-n+1)*(i-n+1)
 
                             while i < N and a < pMax:
@@ -244,7 +254,7 @@ def main():
 
     imagePathList = np.array(sorted(glob.glob("../data/big_buck_bunny_480p_surround-fix/middleFrames/*"),key=findNumbers),dtype=str)
 
-    diagBlock = DiagBlock(cuda=True)
+    diagBlock = DiagBlock(cuda=True,feat="googLeNet")
 
     diagBlock.detectDiagBlock(imagePathList,"test_exp",1)
 if __name__ == "__main__":
