@@ -36,9 +36,8 @@ def main(argv=None):
         print(i,sceneCuts[i],sceneCuts[i+1])
         simMatrix[sceneCuts[i]:sceneCuts[i+1],sceneCuts[i]:sceneCuts[i+1]] = 0
 
-
-
     np.savetxt("../results/{}.csv".format(args.dataset_id),simMatrix)
+    np.savetxt("../data/{}_cuts.csv".format(args.dataset_id),sceneCuts)
 
     plt.imshow(simMatrix.astype(int), cmap='gray', interpolation='nearest')
     plt.xlim(0,len(simMatrix))
