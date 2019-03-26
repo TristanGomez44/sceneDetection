@@ -103,13 +103,10 @@ class DiagBlock():
             tens1 = torch.arange(N).unsqueeze(1).expand(N,pMax)
             tens2 = torch.pow(torch.arange(pMax),2).unsqueeze(0).expand(N,pMax)
 
-            if self.cuda:
-                B = B.cuda()
-                tens1,tens2, = tens1.cuda(),tens2.cuda()
-                lineEnum = lineEnum.cuda()
-                colEnum = colEnum.cuda()
-
-            B[:,0,:] = (tens1==tens2)
+            for n in range(B.size(0)):
+                for p in range(B.size(2)):
+                    if n*n == p:
+                        B[n,0,p] = 1
 
             for k in range(1,K):
 
@@ -119,33 +116,12 @@ class DiagBlock():
                 for n in range(1,N+1):
                     print("\t",n)
 
-                    """
-                    print("Computing plausible values")
-                    p_plausible_values = (np.ceil(n*n/k) < arr1) * (arr1 < (n-k+1)*(n-k+1)+k)
-                    print("Computing values to select")
-                    p_values_to_select = p_plausible_values * p_values_to_sum
+                    for p in range(1,pMax+1):
 
-                    print("Puting the tensor on cuda")
-                    if self.cuda:
-                        tens2 = colEnum[:,N-n,:].cuda()
-                    else:
-                        tens2 = colEnum[:,N-n,:].long()
-
-                    print("Actually selecting them")
-                    tens2 = tens2*p_values_to_select.long()
-
-                    #print(p_plausible_values.sum())
-                    #print(tens2[p_plausible_values,N-n,:].size())
-
-                    #tens2[:,N-n,:][p_values_to_select] = 0
-                    """
-
-                    for p in range(int(np.ceil(n*n/k)),(n-k+1)*(n-k+1)+k):
-
-                        tens1 = lineEnum[N-n:,pMax-p:]
-                        tens2 = colEnum[N-n:,pMax-p:]
-
-                        B[n-1,k,p-1] = precMat[:n,:p][(tens1==tens2)].any()
+                        l=1
+                        while n-l >= 0 and p-l*l >= 0 and not B[n-1,k,p-1]:
+                            B[n-1,k,p-1] = precMat[n-l,p-l*l]
+                            l += 1
 
             possibleValues = torch.nonzero(B)
 
@@ -177,19 +153,18 @@ class DiagBlock():
 
     def detectDiagBlock(self,imagePathList):
 
-        N = int(len(imagePathList))
+        foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
+        simMatrix = self.simMat(imagePathList,foldName)
+
+        print("Full number of shots",len(simMatrix))
+        N = int(len(simMatrix))
         pMax = N*N
 
         print("Number of shots : ",N)
 
-        foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
-        simMatrix = self.simMat(imagePathList,foldName)
-
         simMatrix = simMatrix[:N,:N]
 
         K = self.countScenes(simMatrix)
-
-        possibleValues = self.getPossiblePValues(N,K)
 
         C = torch.zeros((N,K,pMax))
         I = torch.zeros((N,K,pMax))
@@ -201,6 +176,7 @@ class DiagBlock():
         P[:,:,:] = float("NaN")
         G[:] = float("NaN")
 
+
         if self.cuda:
             print("Putting tensors on cuda")
             simMatrix = simMatrix.cuda()
@@ -209,54 +185,53 @@ class DiagBlock():
         for k in range(K):
             print("Computing for",k+1,"blocks over",K)
             for n in range(1,N+1):
-                for p in range(1,pMax+1):
+                for p in range(n-1,n*n):
+                        if k == 0:
 
-                    if k == 0:
+                            C[n-1,0,p] = simMatrix[n:,n:].sum()/(p+(N-n+1)*(N-n+1)-N)
+                            I[n-1,0,p] = N
+                            P[n-1,0,p] = (N-n+1)*(N-n+1)
+                            if n < 10:
+                                print("Init k==0",n-1,0,p)
+                        else:
 
-                        C[n-1,0,p-1] = simMatrix[n:,n:].sum()/(p+(N-n+1)*(N-n+1)-N)
-                        I[n-1,0,p-1] = N
-                        P[n-1,0,p-1] = (N-n+1)*(N-n+1)
-
-                    else:
-
-                        G[:] = float("NaN")
-                        i=n
-                        a = p+(i-n+1)*(i-n+1)
-
-                        while i<N-(k+1) and a-1 < pMax:
-
-                            G[i-1] = simMatrix[n-1:i,n-1:i].sum()/(a+P[i,k-1,a-1]-N)+C[i,k-1,a-1]
-
-                            i+=1
+                            G[:] = float("NaN")
+                            i=n.item()
                             a = p+(i-n+1)*(i-n+1)
 
-                        if n < N-(k+1):
+                            while i < N and a < pMax:
 
-                            G_val = G[n:i][G[n:i] > 0]
+                                G[i-1] = simMatrix[n-1:i,n-1:i].sum()/(a+P[i,k-1,a]-N)+C[i,k-1,a]
+                                i+=1
+                                a = p+(i-n+1)*(i-n+1)
+
+                            G_val = G[n:i]
 
                             if len(G_val) == 0:
                                 minimum,argmin = 0,0
                             else:
                                 minimum,argmin = torch.min(G_val,dim=0)
 
-                            C[n-1,k,p-1] = minimum
+                            C[n-1,k,p] = minimum
 
-                            I[n-1,k,p-1] = argmin+n
+                            I[n-1,k,p] = argmin+n-1
 
-                            b = ((I[n-1,k,p-1]-n+1)*(I[n-1,k,p-1]-n+1)).long()
+                            b = ((I[n-1,k,p]-n+1)*(I[n-1,k,p]-n+1)).long()
 
-                            if p+b-1 < P.size(2):
-                                P[n-1,k,p-1] = b+P[I[n-1,k,p-1].long(),k-1,p+b-1]
+                            if p+b < P.size(2):
+                                P[n-1,k,p] = b+P[I[n-1,k,p].long(),k-1,p+b]
+                            else:
+                                print("p+b is too big")
 
         P_tot = 0
         sceneSplits = [0]
-
+        #print(I[:,1,:]
         for i in range(1,K+1):
             sceneSplits.append(I[sceneSplits[i-1],K-i,P_tot].long().item())
             P_tot += (sceneSplits[i]-sceneSplits[i-1])*(sceneSplits[i]-sceneSplits[i-1])
 
         np.savetxt("../results/{}_baseSplit.csv".format(foldName),np.array(sceneSplits))
-
+        print(sceneSplits)
         print("Sanity check :",P_tot,P[0,K-1,0].item())
 
 def findNumbers(x):
