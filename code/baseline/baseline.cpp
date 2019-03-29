@@ -13,9 +13,9 @@ int main(int argc, char *argv[]){
   int N = atoi(argv[2]);
   int K = atoi(argv[3]);
   int pMax = N*N;
-  int cuda = atoi(argv[4]);
+  std::string device = argv[4];
 
-  torch::Tensor simMat = torch::zeros({N,N});
+  torch::Tensor simMat = torch::zeros({N,N},device);
 
   std::ifstream f(matrixPath);
   float elem;
@@ -26,19 +26,34 @@ int main(int argc, char *argv[]){
     }
   }
 
-  torch::Tensor C = torch::ones({N,K,pMax})*std::numeric_limits<double>::quiet_NaN();
-  torch::Tensor I = torch::ones({N,K,pMax})*std::numeric_limits<double>::quiet_NaN();
-  torch::Tensor P = torch::ones({N,K,pMax})*std::numeric_limits<double>::quiet_NaN();
-  torch::Tensor G = torch::ones({N-1})*std::numeric_limits<double>::quiet_NaN();
+  torch::Tensor C = torch::ones({N,K,pMax},device)*std::numeric_limits<double>::quiet_NaN();
+  torch::Tensor I = torch::ones({N,K,pMax},device)*std::numeric_limits<double>::quiet_NaN();
+  torch::Tensor P = torch::ones({N,K,pMax},device)*std::numeric_limits<double>::quiet_NaN();
+  torch::Tensor G = torch::ones({N-1},device)*std::numeric_limits<double>::quiet_NaN();
 
-  if(cuda){
+  torch::Tensor nValues = torch::arange(0,N);
+  torch::Tensor pValues = torch::arange(0,pMax);
 
-    C = C.cuda();
-    I = I .cuda();
-    P = P.cuda();
-    G = G.cuda();
-    simMat = simMat.cuda();
+  if(device=="cuda"){
+    nValues = nValues.cuda();
+    pValues = pValues.cuda();
   }
+
+  torch::Tensor simMat_exp;
+  torch::Tensor sumVec;
+
+  torch::Tensor ind0;
+  torch::Tensor ind1;
+  torch::Tensor ind2;
+
+  torch::Tensor mask;
+
+  torch::Tensor summedAreas;
+
+  torch::Tensor P_k_sel;
+  torch::Tensor C_k_sel;
+
+  torch::Tensor G_paral;
 
   I.slice(0,0,N).select(1,0).slice(1,0,pMax) = N;
 
@@ -54,7 +69,42 @@ int main(int argc, char *argv[]){
 
         if (k>0){
 
-          std::cout << "k>0" << "\n";
+
+          // Computation of the numerator
+          std::cout << "Ind init" << "\n";
+          ind0 = nValues.slice(0,n-1,N-1).unsqueeze(1).unsqueeze(2).expand({N-n,N-n,N-n});
+          ind1 = nValues.slice(0,n-1,N-1).unsqueeze(0).unsqueeze(2).expand({N-n,N-n,N-n});
+          ind2 = nValues.slice(0,n-1,N-1).unsqueeze(0).unsqueeze(1).expand({N-n,N-n,N-n});
+
+          std::cout << "sim Mat expand and mask" << "\n";
+          simMat_exp = simMat.slice(0,n-1,N-1).slice(1,n-1,N-1).unsqueeze(0).expand({N-n,N-n,N-n});
+          simMat_exp = simMat_exp*((ind1 <= ind0)*(ind2 <= ind0)).to(simMat_exp.dtype());
+
+          std::cout << "sim mat sum" << "\n";
+          sumVec = simMat_exp.sum(2).sum(1);
+
+          //Computation of the denominator
+          std::cout << "Ind init" << "\n";
+          ind0 = nValues.slice(0,n-1,N-1).unsqueeze(1).expand({N-n,pMax});
+          ind1 = pValues.unsqueeze(0).expand({N-n,pMax});
+
+          std::cout << "Computing the mask" << "\n";
+          mask = (ind1 == p+(ind0-n+1)*(ind0-n+1));
+
+          ind0 = nValues.slice(0,n-1,N-1);
+
+          summedAreas = p+(ind0-n+1)*(ind0-n+1);
+
+          std::cout << "Slicing and selecting P and C" << "\n";
+          P_k_sel = P.slice(0,n-1,N-1).select(1,k-1).masked_select(mask);
+          C_k_sel = C.slice(0,n-1,N-1).select(1,k-1).masked_select(mask);
+
+          std::cout << "Computing G" << "\n";
+          G_paral = sumVec/(summedAreas+P_k_sel-N)+C_k_sel;
+
+          std::cout << G_paral << "\n";
+
+          
 
         }
 
