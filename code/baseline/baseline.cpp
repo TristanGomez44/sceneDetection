@@ -102,10 +102,26 @@ int main(int argc, char *argv[]){
           std::cout << "Computing G" << "\n";
           G_paral = sumVec/(summedAreas+P_k_sel-N)+C_k_sel;
 
-          std::cout << G_paral << "\n";
+          std::cout << "Computing the min" << "\n";
+          int argmin,min;
+          if (G_paral.size(0) == 0){
+            min = 0;
+            argmin=0+n-1;
+          }else{
+            min = G_paral.min().item<float>();
+            argmin = G_paral.argmin().item<int>();
+          }
 
-          
+          C.select(0,n-1).select(0,k).select(0,p) = min;
+          I.select(0,n-1).select(0,k).select(0,p) = argmin;
 
+          std::cout << "Computing the area" << "\n";
+          int b = ((argmin-n+1)*(argmin-n+1));
+
+          if(p+b < P.size(2)){
+            P.select(0,n-1).select(0,k).select(0,p) = b+P.select(0,argmin).select(0,k-1).select(0,p+b);
+
+          }
         }
 
 
