@@ -3,17 +3,18 @@
 #include <string>
 #include <stdlib.h>     /* strtod */
 #include <vector>
-
+#include <fstream>
 
 int main(int argc, char *argv[]){
 
 
 
   std::string matrixPath = argv[1];
-  int N = atoi(argv[2]);
-  int K = atoi(argv[3]);
+  std::string outPath = argv[2];
+  int N = atoi(argv[3]);
+  int K = atoi(argv[4]);
   int pMax = N*N;
-  std::string device = argv[4];
+  std::string device = argv[5];
 
   torch::Tensor simMat = torch::zeros({N,N},device);
 
@@ -150,11 +151,7 @@ int main(int argc, char *argv[]){
 
         }
       }
-
-
-
     }
-
   }
 
   int P_tot=0;
@@ -170,5 +167,12 @@ int main(int argc, char *argv[]){
 
   std::cout << P_tot << " ?= " << P.select(0,0).select(0,K-1).select(0,0) << "\n";
   std::cout << sceneSplits << "\n";
+
+  std::ofstream resFile(outPath);
+  int vsize = sceneSplits.size();
+  for (int n=0; n<vsize; n++)
+  {
+      resFile << sceneSplits[n] << "\n";
+  }
 
 }
