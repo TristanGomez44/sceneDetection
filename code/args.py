@@ -94,9 +94,15 @@ class ArgReader():
 
         self.parser.add_argument('--feat', type=str, metavar='N',
                             help='the net to use to produce feature for each shot')
+        self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
+                            help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
+                                selects one of the two datasets.')
 
         self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
                             help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
+        self.parser.add_argument('--batch_size', type=int,metavar='BS',
+                            help='The batchsize to use')
+
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
                             help='the number of processes to load the data. num_workers equal 0 means that it’s \
                             the main process that will do the data loading when needed, num_workers equal 1 is\
@@ -117,7 +123,7 @@ class ArgReader():
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
-                            help='the optimizer to use (default: \'GD\')')
+                            help='the optimizer to use (default: \'SGD\')')
 
         self.parser.add_argument('--start_mode', type=str,metavar='SM',
                     help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
