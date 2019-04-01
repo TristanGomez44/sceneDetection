@@ -7,7 +7,7 @@ import sys
 import cv2
 import numpy as np
 import glob
-
+import modelBuilder
 def getMiddleFrames(dataset):
     #Get the middles frames of each shot for all video in a dataset
     #Require the shot to be pre-computed.
@@ -48,6 +48,82 @@ def getMiddleFrames(dataset):
                     cv2.imwrite(dirname+"/middleFrames/frame"+str(i)+".png",imageRaw)
 
                 i += 1
+
+class SeqLoader():
+
+    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize):
+
+        self.batchSize = batchSize
+        self.lMin = lMin
+        self.lMax = lMax
+        self.imgSize = imgSize
+        self.dataset = dataset
+        np.random.seed(seed)
+
+        videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
+
+        seqList = []
+        self.framesDict = {}
+        for videoPath in videoPathLists:
+
+            middleFramePathList = np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
+            print(os.path.splitext(videoPath)[0]+"/frame*.png")
+
+            vidName = os.path.basename(videoPath)
+            frameInd = 0
+            frameNb = len(middleFramePathList)
+
+            seqLengths = np.random.randint(lMin,lMax,size=(frameNb//lMin)+1)
+
+            seqInds = np.cumsum(seqLengths)
+
+            #The number of the last sequence made with the video
+            lastSeqNb = np.where((seqInds >= frameNb-lMin))[0][0]
+
+            seqInds[lastSeqNb] = frameNb
+
+            seqInds = seqInds[:lastSeqNb+1]
+
+            starts = seqInds[:-1]
+            ends = seqInds[1:]
+            names = np.array(vidName)[np.newaxis].repeat(len(seqInds)-1)
+
+            seqList.extend([{"vidName":vidName,"start":start,"end":end} for vidName,start,end in zip(names,starts,ends)])
+            self.framesDict[vidName] = middleFramePathList
+
+        self.seqList = np.array(seqList,dtype=object)
+
+        np.random.shuffle(self.seqList)
+
+        self.currInd = 0
+
+    def getBatch(self):
+
+        if self.currInd > len(self.seqList):
+            raise ValueError("No more batch to return")
+
+        def readSeq(x):
+            images = np.array(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[x["vidName"]][x["start"]:x["end"]+1])))
+            return images
+
+        batch = np.array(list(map(readSeq,self.seqList[self.currInd:self.currInd+self.batchSize])))
+
+        maxLen = max(list(map(lambda x:len(x),batch)))
+
+        batchTensor = np.zeros((len(batch),maxLen,self.imgSize[0],self.imgSize[1],3))
+
+        for i,seq in enumerate(batch):
+            batchTensor[i,:len(batch[i])] = batch[i]
+
+        self.currInd += self.batchSize
+
+        return batch
+
+def main():
+
+    loader = SeqLoader("OVSD",32,10,20,1,(100,100))
+    print("Get batch")
+    loader.getBatch()
 
 if __name__ == "__main__":
     main()
