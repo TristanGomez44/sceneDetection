@@ -12,17 +12,21 @@ plt.switch_backend('agg')
 import os
 import time
 
-import inceptionv3
-import googleNet
+import resnet
+
+
+import subprocess
+
 
 class DiagBlock():
 
-    def __init__(self,cuda=True,batchSize=32,feat="inceptionv3"):
+    def __init__(self,cuda,batchSize,feat,pretrainDataSet):
 
         self.cuda = cuda
         self.batchSize = batchSize
         self.featModelName = feat
         self.featModel = None
+        self.pretrainDataSet = pretrainDataSet
 
     def simMat(self,imagePathList,foldName):
 
@@ -39,14 +43,31 @@ class DiagBlock():
 
             return x
 
-        if not os.path.exists("../results/{}.csv".format(foldName)):
+        if not os.path.exists("../results/{}_simMat.csv".format(foldName)):
 
             if self.featModel is None:
 
-                if self.featModelName == "inceptionv3":
-                    self.featModel = inceptionv3.inception_v3(pretrained=True)
-                elif self.featModelName == "googLeNet":
-                    self.featModel = googleNet.googlenet(pretrained=True)
+                if self.featModelName == "resnet50":
+
+                    if self.pretrainDataSet == "imageNet":
+                        self.featModel = resnet.resnet50(pretrained=True)
+                    elif self.pretrainDataSet == "places365":
+                        self.featModel = resnet.resnet50(pretrained=False,num_classes=365)
+
+                        ####### This load code comes from https://github.com/CSAILVision/places365/blob/master/run_placesCNN_basic.py ######
+
+                        # load the pre-trained weights
+                        model_file = '%s_places365.pth.tar' % self.featModelName
+                        if not os.access("../models/"+model_file, os.W_OK):
+                            weight_url = 'http://places2.csail.mit.edu/models_places365/' + model_file
+                            os.system('wget ' + weight_url)
+
+                            os.rename(model_file, "../models/"+model_file)
+
+                        checkpoint = torch.load("../models/"+model_file, map_location=lambda storage, loc: storage)
+                        state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
+                        self.featModel.load_state_dict(state_dict)
+
                 else:
                     raise ValueError("Unkown model name :".format(self.feat))
 
@@ -86,15 +107,15 @@ class DiagBlock():
             simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
 
             simMatrix_np = simMatrix.detach().cpu().numpy()
-            np.savetxt("../results/{}.csv".format(foldName),simMatrix_np)
+            np.savetxt("../results/{}_simMat.csv".format(foldName),simMatrix_np)
 
             plt.imshow(simMatrix_np.astype(int), cmap='gray', interpolation='nearest')
-            plt.savefig("../vis/{}.png".format(foldName))
+            plt.savefig("../vis/{}_simMat.png".format(foldName))
 
         else:
             print("Reading similarity matrix")
 
-            simMatrix = torch.tensor(np.genfromtxt("../results/{}.csv".format(foldName)))
+            simMatrix = torch.tensor(np.genfromtxt("../results/{}_simMat.csv".format(foldName)))
 
         return simMatrix
 
@@ -166,7 +187,6 @@ class DiagBlock():
         foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
         simMatrix = self.simMat(imagePathList,foldName)
 
-        print("Full number of shots",len(simMatrix))
         N = int(len(simMatrix))
         pMax = N*N
 
@@ -176,6 +196,12 @@ class DiagBlock():
 
         K = self.countScenes(simMatrix.cpu().numpy())
 
+        if self.cuda:
+            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}_basecuts.csv".format(foldName),str(N),str(K),"cuda"])
+        else:
+            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}_basecuts.csv".format(foldName),str(N),str(K),"cpu"])
+
+        '''
         C = torch.zeros((N,K,pMax))
         I = torch.zeros((N,K,pMax))
         P = torch.zeros((N,K,pMax))
@@ -243,6 +269,7 @@ class DiagBlock():
         np.savetxt("../results/{}/{}_{}.csv".format(exp_id,foldName,model_id),np.array(sceneSplits))
         print(sceneSplits)
         print("Sanity check :",P_tot,P[0,K-1,0].item())
+        '''
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
