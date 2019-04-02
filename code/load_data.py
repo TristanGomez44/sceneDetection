@@ -16,11 +16,12 @@ def getMiddleFrames(dataset):
 
     for videoPath in videoPathLists:
 
-        #Middle frame extraction
+        dirname = "../data/{}/{}/".format(dataset,os.path.splitext(os.path.basename(videoPath))[0])
         if not os.path.exists(dirname+"/middleFrames/"):
             print(videoPath)
 
-            dirname = "../data/{}/{}/".format(dataset,os.path.splitext(os.path.basename(videoPath))[0])
+            videoName = os.path.splitext(os.path.basename(videoPath))[0]
+
             os.makedirs(dirname+"/middleFrames/")
 
             #Middle frame index extration
@@ -38,16 +39,42 @@ def getMiddleFrames(dataset):
                 if i < len(bounds)-1:
                     keyFrameInd.append((bounds[i]+bounds[i+1])//2)
 
+            if dataset == "OVSD":
+                sceneBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,videoName),delimiter='\t')
+            else:
+                raise ValueError("Unknown dataset :".format(dataset))
+
+            print("sceneBounds")
+            print(sceneBounds)
+
             cap = cv2.VideoCapture(videoPath)
             success = True
             i = 0
+            scene=0
+            newSceneShotIndexs = []
+            keyFrameInd = np.array(keyFrameInd)
             while success:
                 success, imageRaw = cap.read()
 
                 if i in keyFrameInd:
+                    if scene < len(sceneBounds):
+                        if sceneBounds[scene,1] < i:
+                            print("Scene ",scene,"shot",np.where(keyFrameInd == i)[0][0],"frame",i,"time",(i//24)//60,"m",(i//24)%60,"s")
+                            newSceneShotIndexs.append(np.where(keyFrameInd == i)[0][0])
+                            scene += 1
+
                     cv2.imwrite(dirname+"/middleFrames/frame"+str(i)+".png",imageRaw)
 
                 i += 1
+
+            #This binary mask indicates if a shot is the begining of a new scene or not
+            sceneTransition = np.zeros((len(keyFrameInd)))
+
+            sceneTransition[newSceneShotIndexs] = 1
+
+            print(sceneTransition.nonzero())
+
+            np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,videoName),sceneTransition)
 
 class SeqLoader():
 
@@ -60,18 +87,23 @@ class SeqLoader():
         self.dataset = dataset
         np.random.seed(seed)
 
-        videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
+        self.videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
+        self.framesDict = {}
+
+    def initLoader(self):
 
         seqList = []
-        self.framesDict = {}
-        for videoPath in videoPathLists:
-
-            middleFramePathList = np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
-            print(os.path.splitext(videoPath)[0]+"/frame*.png")
+        for videoPath in self.videoPathLists:
 
             vidName = os.path.basename(videoPath)
+
+            if not vidName in self.framesDict:
+                self.framesDict[vidName]= np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
+
+            print(os.path.splitext(videoPath)[0]+"/frame*.png")
+
             frameInd = 0
-            frameNb = len(middleFramePathList)
+            frameNb = len(self.framesDict[vidName])
 
             seqLengths = np.random.randint(lMin,lMax,size=(frameNb//lMin)+1)
 
@@ -89,12 +121,9 @@ class SeqLoader():
             names = np.array(vidName)[np.newaxis].repeat(len(seqInds)-1)
 
             seqList.extend([{"vidName":vidName,"start":start,"end":end} for vidName,start,end in zip(names,starts,ends)])
-            self.framesDict[vidName] = middleFramePathList
 
         self.seqList = np.array(seqList,dtype=object)
-
         np.random.shuffle(self.seqList)
-
         self.currInd = 0
 
     def getBatch(self):
