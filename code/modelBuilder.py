@@ -79,7 +79,7 @@ class DiagBlock():
 
             #The modulo term increases the total number of batch by one in case
             #One last small batch is required
-            nbBatch = len(imagePathList)//self.batchSize + (len(imagePathList) % self.batchSize == 0)
+            nbBatch = len(imagePathList)//self.batchSize + (len(imagePathList) % self.batchSize != 0)
             feat = None
             for i in range(nbBatch):
 
