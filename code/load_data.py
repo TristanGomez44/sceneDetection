@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import glob
 import modelBuilder
+import torch
 def getMiddleFrames(dataset):
     #Get the middles frames of each shot for all video in a dataset
     #Require the shot to be pre-computed.
@@ -89,13 +90,14 @@ class SeqLoader():
 
         self.videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
         self.framesDict = {}
+        self.targetDict = {}
 
     def initLoader(self):
 
         seqList = []
         for videoPath in self.videoPathLists:
 
-            vidName = os.path.basename(videoPath)
+            vidName = os.path.splitext(os.path.basename(videoPath))[0]
 
             if not vidName in self.framesDict:
                 self.framesDict[vidName]= np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
@@ -105,12 +107,12 @@ class SeqLoader():
             frameInd = 0
             frameNb = len(self.framesDict[vidName])
 
-            seqLengths = np.random.randint(lMin,lMax,size=(frameNb//lMin)+1)
+            seqLengths = np.random.randint(self.lMin,self.lMax,size=(frameNb//self.lMin)+1)
 
             seqInds = np.cumsum(seqLengths)
 
             #The number of the last sequence made with the video
-            lastSeqNb = np.where((seqInds >= frameNb-lMin))[0][0]
+            lastSeqNb = np.where((seqInds >= frameNb-self.lMin))[0][0]
 
             seqInds[lastSeqNb] = frameNb
 
@@ -122,6 +124,8 @@ class SeqLoader():
 
             seqList.extend([{"vidName":vidName,"start":start,"end":end} for vidName,start,end in zip(names,starts,ends)])
 
+            self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
+
         self.seqList = np.array(seqList,dtype=object)
         np.random.shuffle(self.seqList)
         self.currInd = 0
@@ -131,28 +135,38 @@ class SeqLoader():
         if self.currInd > len(self.seqList):
             raise ValueError("No more batch to return")
 
-        def readSeq(x):
-            images = np.array(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[x["vidName"]][x["start"]:x["end"]+1])))
-            return images
+        batchSize = min(self.batchSize,len(self.seqList)-self.currInd)
 
-        batch = np.array(list(map(readSeq,self.seqList[self.currInd:self.currInd+self.batchSize])))
+        batchTensor = torch.zeros((batchSize,self.lMax,self.imgSize[0],self.imgSize[1],3))
+        targetTensor = torch.zeros((batchSize,self.lMax))
+        seqLenTensor = torch.zeros((batchSize))
+        i=0
 
-        maxLen = max(list(map(lambda x:len(x),batch)))
+        seqList = self.seqList[self.currInd:self.currInd+batchSize]
 
-        batchTensor = np.zeros((len(batch),maxLen,self.imgSize[0],self.imgSize[1],3))
+        print(batchSize,len(seqList))
 
-        for i,seq in enumerate(batch):
-            batchTensor[i,:len(batch[i])] = batch[i]
+        for i,seq in enumerate(seqList):
+            #images = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[x["vidName"]][x["start"]:x["end"]+1])))
+            #print(seq["vidName"],seq['start'],seq['end'],seq['end']-seq['start']+1,"       ",seq["start"],seq["end"]+1)
+            inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
+            batchTensor[i,:len(inTensor)] = inTensor
+            targetTensor[i,:len(inTensor)] = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]+1]
+            seqLenTensor[i] = len(inTensor)
+
+            #batchTensor[i,:x['end']-x['start']+1].sum()
+            #targetTensor[i,:x['end']-x['start']+1].sum()
 
         self.currInd += self.batchSize
 
-        return batch
+        return batchTensor,targetTensor,seqLenTensor
 
 def main():
 
     loader = SeqLoader("OVSD",32,10,20,1,(100,100))
+    loader.initLoader()
     print("Get batch")
-    loader.getBatch()
-
+    x,y,lens = loader.getBatch()
+    print(x.sum(),y,lens)
 if __name__ == "__main__":
     main()
