@@ -6,27 +6,21 @@ import glob
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
-def plotSceneBounds(exp_id, model_id,):
+def plotSceneBounds(simMatPath, modelCutPath,outPath):
 
-    sceneCutsPathList = glob.glob("../results/{}/*_{}.csv".format(exp_id,model_id))
-    for sceneCutsPath in sceneCutsPathList:
+    sceneCuts = np.genfromtxt(modelCutPath)
 
-        sceneCuts = np.genfromtxt(sceneCutsPath)
+    simMat = np.genfromtxt(simMatPath)
 
-        vidName = "_".join(os.path.basename(sceneCutsPath).split("_")[:-1])
-        vidFold = "/".join(os.path.dirname(sceneCutsPath).split("/")[:-1])
+    plt.figure()
+    plt.imshow(simMat.astype(int), cmap='gray', interpolation='nearest')
 
-        simMat = np.genfromtxt(vidFold+"/"+vidName+".csv")
+    for sceneCut in sceneCuts:
+        plt.plot([sceneCut-10,sceneCut+10],[sceneCut+10,sceneCut-10],"-",color="red")
 
-        plt.figure()
-        plt.imshow(simMat.astype(int), cmap='gray', interpolation='nearest')
-
-        for sceneCut in sceneCuts:
-            plt.plot([sceneCut-10,sceneCut+10],[sceneCut+10,sceneCut-10],"-",color="red")
-
-        plt.xlim(0,len(simMat))
-        plt.ylim(len(simMat),0)
-        plt.savefig("../vis/{}/{}_{}.png".format(exp_id,vidName,model_id))
+    plt.xlim(0,len(simMat))
+    plt.ylim(len(simMat),0)
+    plt.savefig(outPath)
 
 def compGT(exp_id,metric):
 
@@ -102,8 +96,9 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--plot_scenebounds',type=str,metavar='RESFILE',help='To plot the scene boundaries found by a model in an experiment. The argument value is the id of the model. The --exp_id argument\
-                                    must also be set.')
+    argreader.parser.add_argument('--plot_scenebounds',nargs=3,type=str,metavar='RESFILE',help='To plot the scene boundaries found by a model in an experiment. \
+                                    The argument value is the path to the similarity matrix. The second value is the path to the cut found by the model and the last is the path\
+                                    to the output image file.')
 
     argreader.parser.add_argument('--comp_gt',action='store_true',help='To compare the performance of models in an experiment with the ground truth. The --exp_id argument\
                                     must be set. ')
@@ -117,7 +112,7 @@ def main(argv=None):
     args = argreader.args
 
     if args.plot_scenebounds:
-        plotSceneBounds(args.exp_id, args.plot_scenebounds)
+        plotSceneBounds(args.plot_scenebounds[0],args.plot_scenebounds[1],args.plot_scenebounds[2])
 
     if args.comp_gt:
         compGT(args.exp_id,args.metric)
