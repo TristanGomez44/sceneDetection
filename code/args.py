@@ -97,11 +97,34 @@ class ArgReader():
         self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                             help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                                 selects one of the two datasets.')
+        self.parser.add_argument('--hidden_size', type=int,metavar='HS',
+                            help='The size of the hidden layers in the RNN')
+        self.parser.add_argument('--num_layers', type=int,metavar='NL',
+                            help='The number of hidden layers in the RNN')
+        self.parser.add_argument('--dropout', type=float,metavar='D',
+                            help='The dropout amount on each layer of the RNN except the last one')
+        self.parser.add_argument('--bidirect', type=str2bool,metavar='BIDIR',
+                            help='If true, the RNN will be bi-bidirectional')
 
         self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
                             help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
         self.parser.add_argument('--batch_size', type=int,metavar='BS',
                             help='The batchsize to use')
+
+        self.parser.add_argument('--l_min', type=int,metavar='LMIN',
+                            help='The minimum length of a training sequence')
+        self.parser.add_argument('--l_max', type=int,metavar='LMAX',
+                            help='The maximum length of a training sequence')
+        self.parser.add_argument('--img_width', type=int,metavar='WIDTH',
+                            help='The width of the resized images')
+        self.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
+                            help='The width of the resized images')
+
+        self.parser.add_argument('--train_prop', type=float,metavar='PROP',
+                            help='The proportion of the dataset to use for training.')
+
+        self.parser.add_argument('--val_prop', type=float,metavar='PROP',
+                            help='The proportion of the dataset to use for validation.')
 
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
                             help='the number of processes to load the data. num_workers equal 0 means that it’s \
