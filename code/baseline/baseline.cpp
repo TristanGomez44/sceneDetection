@@ -172,7 +172,7 @@ int main(int argc, char *argv[]){
   int vsize = sceneSplits.size();
   for (int n=0; n<vsize; n++)
   {
-      resFile << sceneSplits[n] << "\n";
+      resFile << sceneSplits[n]+2 << "\n";
   }
 
 }
