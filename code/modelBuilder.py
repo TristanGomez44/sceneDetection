@@ -13,10 +13,40 @@ import os
 import time
 
 import resnet
-
+from torch.nn import functional as F
 
 import subprocess
+from torch import nn
 
+def buildFeatModel(featModelName,pretrainDataSet):
+
+    if featModelName == "resnet50":
+
+        if pretrainDataSet == "imageNet":
+            featModel = resnet.resnet50(pretrained=True)
+        elif pretrainDataSet == "places365":
+            featModel = resnet.resnet50(pretrained=False,num_classes=365)
+
+            ####### This load code comes from https://github.com/CSAILVision/places365/blob/master/run_placesCNN_basic.py ######
+
+            # load the pre-trained weights
+            model_file = '%s_places365.pth.tar' % featModelName
+            if not os.access("../models/"+model_file, os.W_OK):
+                weight_url = 'http://places2.csail.mit.edu/models_places365/' + model_file
+                os.system('wget ' + weight_url)
+
+                os.rename(model_file, "../models/"+model_file)
+
+            checkpoint = torch.load("../models/"+model_file, map_location=lambda storage, loc: storage)
+            state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
+            featModel.load_state_dict(state_dict)
+        else:
+            raise ValueError("Unknown pretrain dataset : {}".format(pretrainDataSet))
+
+    else:
+        raise ValueError("Unkown model name :".format(featModelName))
+
+    return featModel
 
 class DiagBlock():
 
@@ -47,32 +77,11 @@ class DiagBlock():
 
             if self.featModel is None:
 
-                if self.featModelName == "resnet50":
-
-                    if self.pretrainDataSet == "imageNet":
-                        self.featModel = resnet.resnet50(pretrained=True)
-                    elif self.pretrainDataSet == "places365":
-                        self.featModel = resnet.resnet50(pretrained=False,num_classes=365)
-
-                        ####### This load code comes from https://github.com/CSAILVision/places365/blob/master/run_placesCNN_basic.py ######
-
-                        # load the pre-trained weights
-                        model_file = '%s_places365.pth.tar' % self.featModelName
-                        if not os.access("../models/"+model_file, os.W_OK):
-                            weight_url = 'http://places2.csail.mit.edu/models_places365/' + model_file
-                            os.system('wget ' + weight_url)
-
-                            os.rename(model_file, "../models/"+model_file)
-
-                        checkpoint = torch.load("../models/"+model_file, map_location=lambda storage, loc: storage)
-                        state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
-                        self.featModel.load_state_dict(state_dict)
-
-                else:
-                    raise ValueError("Unkown model name :".format(self.feat))
+                self.featModel = buildFeatModel(self.featModelName,self.pretrainDataSet)
 
                 if self.cuda:
-                    self.featModel = self.featModel.cuda()
+                    self.featModel = self.featModel()
+
                 self.featModel.eval()
 
             print("Computing features")
@@ -271,12 +280,44 @@ class DiagBlock():
         print("Sanity check :",P_tot,P[0,K-1,0].item())
         '''
 
+
+class CNN_RNN(nn.Module):
+
+
+    def __init__(self,featModelName,pretrainDataSetFeat,hiddenSize,layerNb,dropout,bidirect,cuda):
+
+        super(CNN_RNN,self).__init__()
+
+        self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat)
+        self.featModel.eval()
+
+        #No need to throw an error because one has already been
+        #thrown if the model type is unkown
+        if featModelName=="resnet50":
+            nbFeat = 2048
+
+        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
+
+        self.dense = nn.Linear(hiddenSize,2)
+
+    def forward(x):
+
+        x = self.featModel(x)
+        x = self.rnn(x)
+        x = self.dense(x)
+
+        return x
+
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
 
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
 
+def netBuilder(args):
+    net = CNN_RNN(args.feat,args.pretrain_dataset,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda)
+
+    return net
 def main():
 
     imagePathList = np.array(sorted(glob.glob("../data/big_buck_bunny_480p_surround-fix/middleFrames/*"),key=findNumbers),dtype=str)
