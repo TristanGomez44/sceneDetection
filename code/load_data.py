@@ -134,11 +134,6 @@ class SeqLoader():
 
             self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
 
-            if not os.path.exists("../data/{}/{}/{}_{}x{}.pth".format(self.dataset,vidName,vidName,self.imgSize[0],self.imgSize[1])):
-                print("\t Saving video to tensor")
-                videoTens = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[vidName])))
-                torch.save(videoTens,"../data/{}/{}/{}_{}x{}.pth".format(self.dataset,vidName,vidName,self.imgSize[0],self.imgSize[1]))
-
         self.seqList = np.array(seqList,dtype=object)
         np.random.shuffle(self.seqList)
         self.currInd = 0
@@ -158,22 +153,10 @@ class SeqLoader():
         i=0
 
         seqList = self.seqList[self.currInd:self.currInd+batchSize]
-
+        print("Loading batch")
         for i,seq in enumerate(seqList):
-            print(i,"/",len(seqList))
-            #images = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[x["vidName"]][x["start"]:x["end"]+1])))
-            #print(seq["vidName"],seq['start'],seq['end'],seq['end']-seq['start']+1,"       ",seq["start"],seq["end"]+1)
-
-            inTensor = torch.load("../data/{}/{}/{}_{}x{}.pth".format(self.dataset,self.framesDict[seq["vidName"]],self.framesDict[seq["vidName"]],self.imgSize[0],self.imgSize[1]))[seq["start"]:seq["end"]+1]
-
-            #inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
-
-            #batchTensor[i,:len(inTensor)] = inTensor
-            #targetTensor[i,:len(inTensor)] = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]+1]
-            #seqLenTensor[i] = len(inTensor)
-
-            #batchTensor[i,:x['end']-x['start']+1].sum()
-            #targetTensor[i,:x['end']-x['start']+1].sum()
+            print("\t",i,"/",len(seqList))
+            inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
 
         self.currInd += self.batchSize
         sys.exit(0)
@@ -181,7 +164,7 @@ class SeqLoader():
 
 def main():
 
-    loader = SeqLoader("OVSD",32,10,20,1,(100,100))
+    loader = SeqLoader("OVSD",4,10,20,1,(100,100))
     loader.initLoader()
     print("Get batch")
     x,y,lens = loader.getBatch()
