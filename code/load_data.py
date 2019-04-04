@@ -79,7 +79,7 @@ def getMiddleFrames(dataset):
 
 class SeqLoader():
 
-    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize):
+    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize,propStart,propEnd):
 
         self.batchSize = batchSize
         self.lMin = lMin
@@ -88,11 +88,19 @@ class SeqLoader():
         self.dataset = dataset
         np.random.seed(seed)
 
-        self.videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
+        self.videoPathLists = sorted(glob.glob("../data/{}/*.*".format(dataset)))
+
+        nbVid = len(self.videoPathLists)
+        np.random.shuffle(self.videoPathLists)
+
+        self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
+
+        self.videoPathLists = self.videoPathLists
+
         self.framesDict = {}
         self.targetDict = {}
 
-    def initLoader(self):
+    def __iter__(self):
 
         seqList = []
         for videoPath in self.videoPathLists:
@@ -126,14 +134,21 @@ class SeqLoader():
 
             self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
 
+            if not os.path.exists("../data/{}/{}/{}_{}x{}.pth".format(self.dataset,vidName,vidName,self.imgSize[0],self.imgSize[1])):
+                print("\t Saving video to tensor")
+                videoTens = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[vidName])))
+                torch.save(videoTens,"../data/{}/{}/{}_{}x{}.pth".format(self.dataset,vidName,vidName,self.imgSize[0],self.imgSize[1]))
+
         self.seqList = np.array(seqList,dtype=object)
         np.random.shuffle(self.seqList)
         self.currInd = 0
 
-    def getBatch(self):
+        return self
+
+    def __next__(self):
 
         if self.currInd > len(self.seqList):
-            raise ValueError("No more batch to return")
+            raise StopIteration
 
         batchSize = min(self.batchSize,len(self.seqList)-self.currInd)
 
@@ -144,21 +159,24 @@ class SeqLoader():
 
         seqList = self.seqList[self.currInd:self.currInd+batchSize]
 
-        print(batchSize,len(seqList))
-
         for i,seq in enumerate(seqList):
+            print(i,"/",len(seqList))
             #images = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[x["vidName"]][x["start"]:x["end"]+1])))
             #print(seq["vidName"],seq['start'],seq['end'],seq['end']-seq['start']+1,"       ",seq["start"],seq["end"]+1)
-            inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
-            batchTensor[i,:len(inTensor)] = inTensor
-            targetTensor[i,:len(inTensor)] = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]+1]
-            seqLenTensor[i] = len(inTensor)
+
+            inTensor = torch.load("../data/{}/{}/{}_{}x{}.pth".format(self.dataset,self.framesDict[seq["vidName"]],self.framesDict[seq["vidName"]],self.imgSize[0],self.imgSize[1]))[seq["start"]:seq["end"]+1]
+
+            #inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
+
+            #batchTensor[i,:len(inTensor)] = inTensor
+            #targetTensor[i,:len(inTensor)] = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]+1]
+            #seqLenTensor[i] = len(inTensor)
 
             #batchTensor[i,:x['end']-x['start']+1].sum()
             #targetTensor[i,:x['end']-x['start']+1].sum()
 
         self.currInd += self.batchSize
-
+        sys.exit(0)
         return batchTensor,targetTensor,seqLenTensor
 
 def main():
