@@ -80,7 +80,7 @@ class DiagBlock():
                 self.featModel = buildFeatModel(self.featModelName,self.pretrainDataSet)
 
                 if self.cuda:
-                    self.featModel = self.featModel()
+                    self.featModel = self.featModel.cuda()
 
                 self.featModel.eval()
 
@@ -298,12 +298,19 @@ class CNN_RNN(nn.Module):
 
         self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
 
-        self.dense = nn.Linear(hiddenSize,2)
+        self.dense = nn.Linear(hiddenSize*(bidirect+1),2)
 
-    def forward(x):
+    def forward(self,x):
 
+        origBatchSize = x.size(0)
+        origSeqLength = x.size(1)
+
+        x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
+        x = x.permute(0,3,1,2)
         x = self.featModel(x)
-        x = self.rnn(x)
+        x = x.view(origBatchSize,origSeqLength,-1)
+        x = x.permute(1,0,2)
+        x,_ = self.rnn(x)
         x = self.dense(x)
 
         return x
