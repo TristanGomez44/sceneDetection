@@ -149,7 +149,10 @@ class ArgReader():
                             help='the optimizer to use (default: \'SGD\')')
 
         self.parser.add_argument('--start_mode', type=str,metavar='SM',
-                    help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
+                    help='The mode to use to initialise the model. Can be \'scratch\' or \'fine_tune\'.')
+
+        self.parser.add_argument('--init_path', type=str,metavar='SM',
+                    help='The path to the weight file to use to initialise the network')
 
         self.parser.add_argument('--noise', type=float, metavar='NOISE',
                     help='the amount of noise to add in the gradient of the model (as a percentage of the norm)(default: 0.1)')
