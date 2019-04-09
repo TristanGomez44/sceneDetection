@@ -13,6 +13,7 @@ import os
 import time
 
 import resnet
+import googLeNet
 from torch.nn import functional as F
 
 import subprocess
@@ -41,7 +42,14 @@ def buildFeatModel(featModelName,pretrainDataSet):
             state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
             featModel.load_state_dict(state_dict)
         else:
-            raise ValueError("Unknown pretrain dataset : {}".format(pretrainDataSet))
+            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
+
+    elif featModelName == "googLeNet":
+
+        if pretrainDataSet == "imageNet":
+            featModel = googleNet.GoogLeNet(pretrained=True)
+        else:
+            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
     else:
         raise ValueError("Unkown model name :".format(featModelName))
@@ -206,9 +214,9 @@ class DiagBlock():
         K = self.countScenes(simMatrix.cpu().numpy())
 
         if self.cuda:
-            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}_basecuts.csv".format(foldName),str(N),str(K),"cuda"])
+            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cuda"])
         else:
-            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}_basecuts.csv".format(foldName),str(N),str(K),"cpu"])
+            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cpu"])
 
         '''
         C = torch.zeros((N,K,pMax))
