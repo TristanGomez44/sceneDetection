@@ -94,6 +94,10 @@ class ArgReader():
 
         self.parser.add_argument('--feat', type=str, metavar='N',
                             help='the net to use to produce feature for each shot')
+
+        self.parser.add_argument('--feat_audio', type=str, metavar='N',
+                            help='the net to use to produce audio feature for each shot')
+
         self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                             help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                                 selects one of the two datasets.')
@@ -106,25 +110,51 @@ class ArgReader():
         self.parser.add_argument('--bidirect', type=str2bool,metavar='BIDIR',
                             help='If true, the RNN will be bi-bidirectional')
 
+        self.parser.add_argument('--train_visual', type=str2bool,metavar='BOOL',
+                            help='If true, the visual feature extractor will also be trained')
+
+        self.parser.add_argument('--train_audio', type=str2bool,metavar='BOOL',
+                            help='If true, the audio feature extractor will also be trained')
+
         self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
                             help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
         self.parser.add_argument('--batch_size', type=int,metavar='BS',
-                            help='The batchsize to use')
+                            help='The batchsize to use for training')
+
+        self.parser.add_argument('--val_batch_size', type=int,metavar='BS',
+                            help='The batchsize to use for validation')
 
         self.parser.add_argument('--l_min', type=int,metavar='LMIN',
                             help='The minimum length of a training sequence')
         self.parser.add_argument('--l_max', type=int,metavar='LMAX',
                             help='The maximum length of a training sequence')
+
+        self.parser.add_argument('--val_l', type=int,metavar='LMAX',
+                            help='Length of sequences for validation')
+
+
+        self.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
+                            help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
+
         self.parser.add_argument('--img_width', type=int,metavar='WIDTH',
                             help='The width of the resized images')
         self.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
                             help='The width of the resized images')
 
-        self.parser.add_argument('--train_prop', type=float,metavar='PROP',
-                            help='The proportion of the dataset to use for training.')
+        self.parser.add_argument('--train_part_beg', type=float,metavar='START',
+                            help='The (normalized) start position of the dataset to use for training')
+        self.parser.add_argument('--train_part_end', type=float,metavar='END',
+                            help='The (normalized) end position of the dataset to use for training')
 
-        self.parser.add_argument('--val_prop', type=float,metavar='PROP',
-                            help='The proportion of the dataset to use for validation.')
+        self.parser.add_argument('--val_part_beg', type=float,metavar='START',
+                            help='The (normalized) start position of the dataset to use for validation')
+        self.parser.add_argument('--val_part_end', type=float,metavar='END',
+                            help='The (normalized) end position of the dataset to use for validation')
+
+        self.parser.add_argument('--test_part_beg', type=float,metavar='START',
+                            help='The (normalized) start position of the dataset to use for testing')
+        self.parser.add_argument('--test_part_end', type=float,metavar='END',
+                            help='The (normalized) end position of the dataset to use for testing')
 
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
                             help='the number of processes to load the data. num_workers equal 0 means that it’s \
@@ -141,10 +171,18 @@ class ArgReader():
                             help='the id of the individual model')
         self.parser.add_argument('--exp_id', type=str, metavar='EXP_ID',
                             help='the id of the experience')
-        self.parser.add_argument('--dataset', type=str, metavar='N',help='the dataset to use. Can be \'NETFLIX\', \'IRCCYN\' or \'VQEG\'.')
+
+        self.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+        self.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+        self.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
 
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
+
+        self.parser.add_argument('--class_weight', type=float, metavar='S',
+                            help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
+                            makes weights proportional to the class instance number of the other class.')
+
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
                             help='the optimizer to use (default: \'SGD\')')
 
@@ -162,6 +200,9 @@ class ArgReader():
 
         self.parser.add_argument('--note', type=str,metavar='NOTE',
                             help="A note on the model")
+
+        self.parser.add_argument('--audio_len', type=float,metavar='NOTE',
+                            help="The length of the audio for each shot (in seconds)")
 
         self.args = None
 

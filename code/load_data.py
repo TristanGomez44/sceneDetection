@@ -9,13 +9,23 @@ import numpy as np
 import glob
 import modelBuilder
 import torch
-def getMiddleFrames(dataset):
+
+import subprocess
+
+import soundfile as sf
+import math
+from PIL import Image
+from torchvision import transforms
+
+import vggish_input
+def getMiddleFrames(dataset,audioLen=1):
     #Get the middles frames of each shot for all video in a dataset
     #Require the shot to be pre-computed.
 
-    videoPathLists = glob.glob("../data/{}/*.*".format(dataset))
+    videoPathList = glob.glob("../data/{}/*.*".format(dataset))
+    videoPathList = list(filter(lambda x:x.find(".wav")==-1,videoPathList))
 
-    for videoPath in videoPathLists:
+    for videoPath in videoPathList:
 
         dirname = "../data/{}/{}/".format(dataset,os.path.splitext(os.path.basename(videoPath))[0])
         if not os.path.exists(dirname+"/middleFrames/"):
@@ -31,6 +41,18 @@ def getMiddleFrames(dataset):
             shots = tree.find("content").find("body").find("shots")
 
             frameNb = int(shots[-1].get("fduration"))+int(shots[-1].get("fbegin"))
+            fps = float(tree.find("content").find("head").find("media").find("fps").text)
+
+            #Extract the audio of the video
+            audioPath = os.path.dirname(videoPath)+"/"+videoName+".wav"
+            audioInfStr = tree.find("content").find("head").find("media").find("codec").find("audio").text
+
+            audioSampleRate = int(audioInfStr.split(",")[1].replace(",","").replace("Hz","").replace(" ",""))
+            audioBitRate = int(audioInfStr.split(",")[4].replace(",","").replace("kb/s","").replace(" ",""))*1000
+
+            if not os.path.exists(audioPath):
+                command = "ffmpeg -i {} -ab {} -ac 2 -ar {} -vn {}".format(videoPath,audioBitRate,audioSampleRate,audioPath)
+                subprocess.call(command, shell=True)
 
             bounds = list(map(lambda x:int(x.get("fbegin")),shots))
             bounds.append(frameNb)
@@ -45,26 +67,37 @@ def getMiddleFrames(dataset):
             else:
                 raise ValueError("Unknown dataset :".format(dataset))
 
-            print("sceneBounds")
-            print(sceneBounds)
-
             cap = cv2.VideoCapture(videoPath)
             success = True
             i = 0
             scene=0
             newSceneShotIndexs = []
             keyFrameInd = np.array(keyFrameInd)
+
+            #Opening the sound file
+            audioData, fs = sf.read(audioPath)
+            #audioData= np.transpose(audioData,[1,0])
+
             while success:
                 success, imageRaw = cap.read()
-
                 if i in keyFrameInd:
                     if scene < len(sceneBounds):
                         if sceneBounds[scene,1] < i:
-                            print("Scene ",scene,"shot",np.where(keyFrameInd == i)[0][0],"frame",i,"time",(i//24)//60,"m",(i//24)%60,"s")
+                            print("Scene ",scene,"shot",np.where(keyFrameInd == i)[0][0],"frame",i,"time",(i//fps)//60,"m",(i//fps)%60,"s")
                             newSceneShotIndexs.append(np.where(keyFrameInd == i)[0][0])
                             scene += 1
 
                     cv2.imwrite(dirname+"/middleFrames/frame"+str(i)+".png",imageRaw)
+
+                    #Writing the audio sample
+                    time = i/fps
+                    pos = time*audioSampleRate
+                    interv = audioLen*audioSampleRate/2
+                    sampleToWrite = audioData[int(round(pos-interv)):int(round(pos+interv)),:]
+                    fullArray = np.zeros((int(round(pos+interv))-int(round(pos-interv)),sampleToWrite.shape[1]))
+                    fullArray[:len(sampleToWrite)] = sampleToWrite
+
+                    sf.write(dirname+"/middleFrames/frame"+str(i)+".wav",fullArray,audioSampleRate,subtype='PCM_16',format="WAV")
 
                 i += 1
 
@@ -79,7 +112,7 @@ def getMiddleFrames(dataset):
 
 class SeqLoader():
 
-    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize,propStart,propEnd):
+    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize,propStart,propEnd,shuffle,removeUselessSeq=True,visualFeat=True,audioFeat=False,audioLen=-1):
 
         self.batchSize = batchSize
         self.lMin = lMin
@@ -87,18 +120,29 @@ class SeqLoader():
         self.imgSize = imgSize
         self.dataset = dataset
         np.random.seed(seed)
-
-        self.videoPathLists = sorted(glob.glob("../data/{}/*.*".format(dataset)))
+        self.shuffle = shuffle
+        self.audioFeat = audioFeat
+        self.visualFeat = visualFeat
+        self.audioLen = audioLen
+        self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
 
         nbVid = len(self.videoPathLists)
-        np.random.shuffle(self.videoPathLists)
+        if shuffle:
+            np.random.shuffle(self.videoPathLists)
 
         self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
-
+        print("Nb videos :",len(self.videoPathLists))
         self.videoPathLists = self.videoPathLists
 
         self.framesDict = {}
         self.targetDict = {}
+
+        self.removeUselessSeq = removeUselessSeq
+
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+        self.preproc = transforms.Compose([transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+        self.preprocAudio = transforms.ToTensor()
 
     def __iter__(self):
 
@@ -107,67 +151,124 @@ class SeqLoader():
 
             vidName = os.path.splitext(os.path.basename(videoPath))[0]
 
+            self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
+
             if not vidName in self.framesDict:
                 self.framesDict[vidName]= np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
-
-            print(os.path.splitext(videoPath)[0]+"/frame*.png")
 
             frameInd = 0
             frameNb = len(self.framesDict[vidName])
 
-            seqLengths = np.random.randint(self.lMin,self.lMax,size=(frameNb//self.lMin)+1)
+            seqLengths = np.random.randint(self.lMin,self.lMax+1,size=(frameNb//self.lMin)+(frameNb%self.lMin!=0))
 
             seqInds = np.cumsum(seqLengths)
+            seqInds = np.concatenate(([0],seqInds),axis=0)
 
             #The number of the last sequence made with the video
             lastSeqNb = np.where((seqInds >= frameNb-self.lMin))[0][0]
 
-            seqInds[lastSeqNb] = frameNb
+            seqInds[-1] = frameNb
 
-            seqInds = seqInds[:lastSeqNb+1]
+            if self.shuffle:
+                seqInds = seqInds[:lastSeqNb+1]
 
             starts = seqInds[:-1]
             ends = seqInds[1:]
+
+            if self.removeUselessSeq:
+                starts,ends = self.removeUselessSeqFunc(starts,ends,self.targetDict[vidName])
+
+            if ends[-1]-starts[-1]+1 > self.lMax:
+                ends[-1] = starts[-1] + self.lMax -1
+
+            lengs = np.array(list(map(lambda x: x[1]-x[0]+1,list(zip(starts,ends)))))
+
             names = np.array(vidName)[np.newaxis].repeat(len(seqInds)-1)
 
             seqList.extend([{"vidName":vidName,"start":start,"end":end} for vidName,start,end in zip(names,starts,ends)])
 
-            self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
 
         self.seqList = np.array(seqList,dtype=object)
-        np.random.shuffle(self.seqList)
+
+        if self.shuffle:
+            np.random.shuffle(self.seqList)
         self.currInd = 0
+
+        self.batchNb = len(self.seqList)//self.batchSize
 
         return self
 
     def __next__(self):
 
-        if self.currInd > len(self.seqList):
+        if self.currInd >= len(self.seqList):
             raise StopIteration
 
         batchSize = min(self.batchSize,len(self.seqList)-self.currInd)
 
-        batchTensor = torch.zeros((batchSize,self.lMax,self.imgSize[0],self.imgSize[1],3))
+        if self.visualFeat:
+            videoTensor = torch.zeros((batchSize,self.lMax,3,self.imgSize[0],self.imgSize[1]))
+        else:
+            videoTensor = None
+
+        if self.audioFeat:
+            audioTensor = torch.zeros((batchSize,self.lMax,1,int(self.audioLen*96),64))
+        else:
+            audioTensor = None
+
+        if (not self.visualFeat) and (not self.audioFeat):
+            raise ValueError("At least one modality should be chosen among visual and audio")
+
         targetTensor = torch.zeros((batchSize,self.lMax))
-        seqLenTensor = torch.zeros((batchSize))
+        seqLenTensor = np.zeros((batchSize)).astype(int)
+        imagePathArray = []
         i=0
 
         seqList = self.seqList[self.currInd:self.currInd+batchSize]
-        print("Loading batch")
+
         for i,seq in enumerate(seqList):
-            print("\t",i,"/",len(seqList))
-            inTensor = torch.tensor(list(map(lambda x:cv2.resize(cv2.imread(x), self.imgSize),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]+1])))
+
+            imagePathArray.append(self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])
+
+            if self.visualFeat:
+                vidTens = torch.cat(list(map(lambda x:self.preproc(Image.open(x)).unsqueeze(0),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])),dim=0)
+                videoTensor[i,:len(vidTens)] = vidTens
+                sequenceLen = len(vidTens)
+
+            if self.audioFeat:
+                audioTens = torch.cat(list(map(lambda x:self.preprocAudio(vggish_input.wavfile_to_examples(x[:-3]+"wav")).permute(1,2,0).unsqueeze(0),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])),dim=0)
+                audioTensor[i,:len(audioTens)] = audioTens
+                sequenceLen = len(audioTens)
+
+            targs = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]]
+            if targs[0] == 1:
+                targs[0] = 0
+            targetTensor[i,:sequenceLen] = targs
+            seqLenTensor[i] = sequenceLen
+
 
         self.currInd += self.batchSize
-        sys.exit(0)
-        return batchTensor,targetTensor,seqLenTensor
+
+        return videoTensor,audioTensor,targetTensor,torch.tensor(seqLenTensor),imagePathArray
+
+    def removeUselessSeqFunc(self,starts,ends,targets):
+
+        starts_filt = []
+        ends_filt = []
+
+        for start,end in zip(starts,ends):
+            if targets[start] == 1:
+                targets[start] = 0
+
+            if targets[start:end+1].sum() > 0:
+                starts_filt.append(start)
+                ends_filt.append(end)
+
+        return starts_filt,ends_filt
 
 def main():
 
-    loader = SeqLoader("OVSD",4,10,20,1,(100,100))
-    loader.initLoader()
-    print("Get batch")
-    x,y,lens = loader.getBatch()
-    print(x.sum(),y,lens)
+    getMiddleFrames("OVSD")
+
+
 if __name__ == "__main__":
     main()
