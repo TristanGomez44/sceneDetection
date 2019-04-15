@@ -13,20 +13,21 @@ import os
 import time
 
 import resnet
-import googLeNet
+import googleNet
 from torch.nn import functional as F
 
 import subprocess
 from torch import nn
-
-def buildFeatModel(featModelName,pretrainDataSet):
+import vggish
+import vggish_input
+def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
 
     if featModelName == "resnet50":
 
         if pretrainDataSet == "imageNet":
-            featModel = resnet.resnet50(pretrained=True)
+            featModel = resnet.resnet50(pretrained=True,layFeatCut=layFeatCut)
         elif pretrainDataSet == "places365":
-            featModel = resnet.resnet50(pretrained=False,num_classes=365)
+            featModel = resnet.resnet50(pretrained=False,num_classes=365,layFeatCut=layFeatCut)
 
             ####### This load code comes from https://github.com/CSAILVision/places365/blob/master/run_placesCNN_basic.py ######
 
@@ -47,28 +48,52 @@ def buildFeatModel(featModelName,pretrainDataSet):
     elif featModelName == "googLeNet":
 
         if pretrainDataSet == "imageNet":
-            featModel = googleNet.GoogLeNet(pretrained=True)
+            featModel = googleNet.googlenet(pretrained=True)
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
     else:
-        raise ValueError("Unkown model name :".format(featModelName))
+        raise ValueError("Unkown model name : {}".format(featModelName))
 
     return featModel
 
+def buildAudioFeatModel(audioFeatModelName):
+
+    if audioFeatModelName == "vggish":
+        model = vggish.vggish()
+    else:
+        raise ValueError("Unkown audio feat model :",audioFeatModelName)
+
+    return model
+
 class DiagBlock():
 
-    def __init__(self,cuda,batchSize,feat,pretrainDataSet):
+    def __init__(self,cuda,batchSize,feat,pretrainDataSet,audioFeat):
 
         self.cuda = cuda
         self.batchSize = batchSize
-        self.featModelName = feat
+
         self.featModel = None
+        self.featModelName = feat
+
+        self.audioFeatModel = None
+        self.audioFeatModelName = audioFeat
+
         self.pretrainDataSet = pretrainDataSet
 
-    def simMat(self,imagePathList,foldName):
+    def simMat(self,filePathList,foldName,modal="visual"):
 
-        def preprocc(x):
+        def preprocc_audio(x):
+            x = vggish_input.wavfile_to_examples(x)
+
+            if self.cuda:
+                x = torch.tensor(x).cuda().unsqueeze(0)
+            else:
+                x = torch.tensor(x)
+
+            return x.float()
+
+        def preprocc_visual(x):
             x = cv2.imread(x)
             x = resize(x, (299, 299,3), anti_aliasing=True,mode="constant")
 
@@ -81,32 +106,41 @@ class DiagBlock():
 
             return x
 
-        if not os.path.exists("../results/{}_simMat.csv".format(foldName)):
+        if modal == "visual":
+            preprocc=preprocc_visual
+            featModBuilder = buildFeatModel
+            kwargs = {'featModelName':self.featModelName,'pretrainDataSet':self.pretrainDataSet}
+        elif modal == "audio":
+            preprocc=preprocc_audio
+            featModBuilder = buildAudioFeatModel
+            kwargs = {'audioFeatModelName':self.audioFeatModelName}
+        else:
+            raise ValueError("Unkown modality : {}".format(modal))
 
-            if self.featModel is None:
+        if not os.path.exists("../results/{}_{}_simMatTEST.csv".format(foldName,modal)):
 
-                self.featModel = buildFeatModel(self.featModelName,self.pretrainDataSet)
+            featModel = featModBuilder(**kwargs)
 
-                if self.cuda:
-                    self.featModel = self.featModel.cuda()
+            if self.cuda:
+                featModel = featModel.cuda()
 
-                self.featModel.eval()
+            featModel.eval()
 
             print("Computing features")
 
             #The modulo term increases the total number of batch by one in case
             #One last small batch is required
-            nbBatch = len(imagePathList)//self.batchSize + (len(imagePathList) % self.batchSize != 0)
+            nbBatch = len(filePathList)//self.batchSize + (len(filePathList) % self.batchSize != 0)
             feat = None
             for i in range(nbBatch):
 
-                indMax = min((i+1)*self.batchSize,len(imagePathList))
+                indMax = min((i+1)*self.batchSize,len(filePathList))
 
-                imageBatch = list(map(preprocc,imagePathList[i*self.batchSize:indMax]))
+                tensorBatch = list(map(preprocc,filePathList[i*self.batchSize:indMax]))
+                print(tensorBatch[0].size())
+                tensorBatch = torch.cat(tensorBatch)
 
-                imageBatch = torch.cat(imageBatch)
-
-                featBatch = self.featModel(imageBatch).detach()
+                featBatch = featModel(tensorBatch).detach()
 
                 if feat is None:
                     feat = featBatch
@@ -124,15 +158,18 @@ class DiagBlock():
             simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
 
             simMatrix_np = simMatrix.detach().cpu().numpy()
-            np.savetxt("../results/{}_simMat.csv".format(foldName),simMatrix_np)
+            np.savetxt("../results/{}_{}_simMat.csv".format(foldName,modal),simMatrix_np)
 
             plt.imshow(simMatrix_np.astype(int), cmap='gray', interpolation='nearest')
-            plt.savefig("../vis/{}_simMat.png".format(foldName))
+            plt.savefig("../vis/{}_{}_simMat.png".format(foldName,modal))
 
         else:
             print("Reading similarity matrix")
 
-            simMatrix = torch.tensor(np.genfromtxt("../results/{}_simMat.csv".format(foldName)))
+            simMatrix = torch.tensor(np.genfromtxt("../results/{}_{}_simMat.csv".format(foldName,modal))).float()
+
+            if self.cuda:
+                simMatrix = simMatrix.cuda()
 
         return simMatrix
 
@@ -199,10 +236,17 @@ class DiagBlock():
         print(K)
         return K
 
-    def detectDiagBlock(self,imagePathList,exp_id,model_id):
+    def detectDiagBlock(self,imagePathList,audioPathList,exp_id,model_id):
 
         foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
-        simMatrix = self.simMat(imagePathList,foldName)
+        simMatrix = self.simMat(imagePathList,foldName,modal="visual")
+
+        if not audioPathList is None:
+            simMatrix_audio =self.simMat(audioPathList,foldName,modal="audio")
+
+            simMatrix = ((simMatrix/simMatrix.max())+(simMatrix_audio/simMatrix_audio.max()))/2
+
+        np.savetxt("../results/{}_{}_simMat.csv".format(foldName,model_id),simMatrix.detach().cpu().numpy())
 
         N = int(len(simMatrix))
         pMax = N*N
@@ -214,131 +258,94 @@ class DiagBlock():
         K = self.countScenes(simMatrix.cpu().numpy())
 
         if self.cuda:
-            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cuda"])
+            subprocess.run(["./baseline/build/baseline", "../results/{}_{}_simMat.csv".format(foldName,model_id),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cuda"])
         else:
-            subprocess.run(["./baseline/build/baseline", "../data/{}/{}_simMat.csv".format(foldName,foldName),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cpu"])
-
-        '''
-        C = torch.zeros((N,K,pMax))
-        I = torch.zeros((N,K,pMax))
-        P = torch.zeros((N,K,pMax))
-        G = torch.zeros(N-1)
-
-        C[:,:,:] = float("NaN")
-        I[:,:,:] = float("NaN")
-        P[:,:,:] = float("NaN")
-        G[:] = float("NaN")
-
-
-        if self.cuda:
-            print("Putting tensors on cuda")
-            simMatrix = simMatrix.cuda()
-            C,I,P,G = C.cuda(),I.cuda(),P.cuda(),G.cuda()
-
-        for k in range(K):
-            print("Computing for",k+1,"blocks over",K)
-            for n in range(1,N+1):
-                for p in range(n-1,n*n):
-                        if k == 0:
-
-                            C[n-1,0,p] = simMatrix[n:,n:].sum()/(p+(N-n+1)*(N-n+1)-N)
-                            I[n-1,0,p] = N
-                            P[n-1,0,p] = (N-n+1)*(N-n+1)
-                            if n < 10:
-                                print("Init k==0",n-1,0,p)
-                        else:
-
-                            G[:] = float("NaN")
-                            i=n
-                            a = p+(i-n+1)*(i-n+1)
-
-                            while i < N and a < pMax:
-
-                                G[i-1] = simMatrix[n-1:i,n-1:i].sum()/(a+P[i,k-1,a]-N)+C[i,k-1,a]
-                                i+=1
-                                a = p+(i-n+1)*(i-n+1)
-
-                            G_val = G[n:i]
-
-                            if len(G_val) == 0:
-                                minimum,argmin = 0,0
-                            else:
-                                minimum,argmin = torch.min(G_val,dim=0)
-
-                            C[n-1,k,p] = minimum
-
-                            I[n-1,k,p] = argmin+n-1
-
-                            b = ((I[n-1,k,p]-n+1)*(I[n-1,k,p]-n+1)).long()
-
-                            if p+b < P.size(2):
-                                P[n-1,k,p] = b+P[I[n-1,k,p].long(),k-1,p+b]
-                            else:
-                                print("p+b is too big")
-
-        P_tot = 0
-        sceneSplits = [0]
-        #print(I[:,1,:]
-        for i in range(1,K+1):
-            sceneSplits.append(I[sceneSplits[i-1],K-i,P_tot].long().item())
-            P_tot += (sceneSplits[i]-sceneSplits[i-1])*(sceneSplits[i]-sceneSplits[i-1])
-
-        np.savetxt("../results/{}/{}_{}.csv".format(exp_id,foldName,model_id),np.array(sceneSplits))
-        print(sceneSplits)
-        print("Sanity check :",P_tot,P[0,K-1,0].item())
-        '''
-
+            subprocess.run(["./baseline/build/baseline", "../results/{}_{}_simMat.csv".format(foldName,model_id),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cpu"])
 
 class CNN_RNN(nn.Module):
 
 
-    def __init__(self,featModelName,pretrainDataSetFeat,hiddenSize,layerNb,dropout,bidirect,cuda):
+    def __init__(self,featModelName,pretrainDataSetFeat,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual):
 
         super(CNN_RNN,self).__init__()
 
-        self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat)
-        self.featModel.eval()
+        self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat,layFeatCut)
 
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
         if featModelName=="resnet50":
-            nbFeat = 2048
+            nbFeat = 256*2**(layFeatCut-1)
+        elif featModelName=="googLeNet":
+            nbFeat = 1024
 
-        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
+        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=0,bidirectional=bidirect)
 
-        self.dense = nn.Linear(hiddenSize*(bidirect+1),2)
+        self.dense = nn.Linear(hiddenSize*(bidirect+1),1024)
+
+        self.final = nn.Linear(1024,2)
+
+
+        self.train_visual = train_visual
 
     def forward(self,x):
 
         origBatchSize = x.size(0)
         origSeqLength = x.size(1)
-
+        #print(x.size())
         x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
-        x = x.permute(0,3,1,2)
+        #print(x.size())
+        #x = x.permute(0,3,1,2)
+        #print(x.size())
         x = self.featModel(x)
+        #print(x.size())
         x = x.view(origBatchSize,origSeqLength,-1)
-        x = x.permute(1,0,2)
+        #print(x.size())
+        #x = x.permute(1,0,2)
+        #print("Before rnn",x.size())
         x,_ = self.rnn(x)
-        x = self.dense(x)
-
+        #print("After rnn",x.size())
+        x = F.relu(x)
+        x = F.relu(self.dense(x))
+        x = self.final(x)
+        #print(x.size())
+        #x = x.permute(1,0,2)
+        #print(x.size())
+        #sys.exit(0)
         return x
+
+    def getParams(self):
+
+        featParams = list(self.featModel.parameters())
+        params = []
+
+        for p in self.rnn.parameters():
+            params.append(p)
+        for p in self.dense.parameters():
+            params.append(p)
+
+        return (p for p in params)
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
 
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
-
 def netBuilder(args):
-    net = CNN_RNN(args.feat,args.pretrain_dataset,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda)
+    net = CNN_RNN(args.feat,args.pretrain_dataset,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda,args.lay_feat_cut,args.train_visual)
 
     return net
+
 def main():
 
-    imagePathList = np.array(sorted(glob.glob("../data/big_buck_bunny_480p_surround-fix/middleFrames/*"),key=findNumbers),dtype=str)
 
-    diagBlock = DiagBlock(cuda=True,feat="googLeNet")
+    imagePathList = np.array(sorted(glob.glob("../data/OVSD/Big_buck_bunny/middleFrames/*"),key=findNumbers),dtype=str)
+    imagePathList = list(filter(lambda x:x.find(".wav") == -1,imagePathList))
 
-    diagBlock.detectDiagBlock(imagePathList,"test_exp",1)
+    soundPathList = np.array(sorted(glob.glob("../data/OVSD/Big_buck_bunny/middleFrames/*.wav"),key=findNumbers),dtype=str)
+
+    diagBlock = DiagBlock(cuda=True,batchSize=32,feat="googLeNet",pretrainDataSet="imageNet",audioFeat="vggish")
+
+    diagBlock.detectDiagBlock(imagePathList,soundPathList,"test_exp",1)
+
 if __name__ == "__main__":
     main()
