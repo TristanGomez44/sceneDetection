@@ -112,14 +112,13 @@ def getMiddleFrames(dataset,audioLen=1):
 
 class SeqLoader():
 
-    def __init__(self,dataset,batchSize,lMin,lMax,seed,imgSize,propStart,propEnd,shuffle,removeUselessSeq=True,visualFeat=True,audioFeat=False,audioLen=-1):
+    def __init__(self,dataset,batchSize,lMin,lMax,imgSize,propStart,propEnd,shuffle,removeUselessSeq=True,visualFeat=True,audioFeat=False,audioLen=-1):
 
         self.batchSize = batchSize
         self.lMin = lMin
         self.lMax = lMax
         self.imgSize = imgSize
         self.dataset = dataset
-        np.random.seed(seed)
         self.shuffle = shuffle
         self.audioFeat = audioFeat
         self.visualFeat = visualFeat
@@ -132,7 +131,6 @@ class SeqLoader():
 
         self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
         print("Nb videos :",len(self.videoPathLists))
-        self.videoPathLists = self.videoPathLists
 
         self.framesDict = {}
         self.targetDict = {}
@@ -265,10 +263,123 @@ class SeqLoader():
 
         return starts_filt,ends_filt
 
+class PairLoader():
+
+    def __init__(self,dataset,batchSize,imgSize,propStart,propEnd,shuffle):
+
+        self.batchSize = batchSize
+        self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
+        nbVid = len(self.videoPathLists)
+        self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
+        print("Nb videos :",len(self.videoPathLists))
+        self.dataset=dataset
+        self.targetDict = {}
+        self.shuffle = shuffle
+        for videoPath in self.videoPathLists:
+            vidName = os.path.basename(os.path.splitext(videoPath)[0])
+            self.targetDict[vidName] = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
+
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.preproc = transforms.Compose([transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+
+    def __iter__(self):
+
+        self.vidNames = []
+        self.img1List,self.img2List,self.img3List = [],[],[]
+        self.targs1,self.targs2,self.targs3 = [],[],[]
+
+        for videoPath in self.videoPathLists:
+            vidName = os.path.basename(os.path.splitext(videoPath)[0])
+
+            imagePathList = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/{}/middleFrames/*.*".format(self.dataset,vidName)))))
+            sceneInds = np.cumsum(self.targetDict[vidName][:len(imagePathList)])
+
+            #Building anchor tensor
+            img1List,targs1 = np.array(imagePathList),sceneInds
+            imageTarget1 = np.concatenate((img1List[:,np.newaxis],targs1[:,np.newaxis].astype(str)),axis=1)
+
+            #Building positive tensor
+            #img2List,targs2 = img1List.copy(),targs1.copy()
+            #imageTarget2 = np.concatenate((img2List[:,np.newaxis],targs2[:,np.newaxis].astype(str)),axis=1)
+            imageTarget2 = np.zeros_like(imageTarget1)
+            for i in range(int(targs1[-1])+1):
+                #print("Scene")
+                imageTargScene = imageTarget1[imageTarget1[:,1].astype(float) == i]
+                #print(imageTargScene[:10])
+                np.random.shuffle(imageTargScene)
+                #print(imageTargScene[:10])
+                imageTarget2[imageTarget1[:,1].astype(float) == i] = imageTargScene
+                #print(imageTarget2[:10])
+
+            #print(imageTarget2[:10])
+
+            img2List,targs2 = imageTarget2.transpose()
+
+            #Buiding negative tensor
+            imageTarget3 = np.zeros_like(imageTarget1)
+
+            for i in range(int(targs1[-1])+1):
+
+                imageTargDiff = imageTarget1[imageTarget1[:,1].astype(float) != i]
+                np.random.shuffle(imageTargDiff)
+
+                imageTarget3[imageTarget1[:,1].astype(float) == i] = imageTargDiff[:(imageTarget1[:,1].astype(float) == i).sum()]
+
+            img3List,targs3 = imageTarget3.transpose()
+
+            self.vidNames.extend([vidName for i in range(len(imagePathList))])
+            self.img1List.extend(img1List)
+            self.img2List.extend(img2List)
+            self.img3List.extend(img3List)
+            self.targs1.extend(targs1)
+            self.targs2.extend(targs2)
+            self.targs3.extend(targs3)
+
+            #print("End")
+            #print(self.img1List[:10])
+            #print(self.img2List[:10])
+            #sys.exit(0)
+
+        if self.shuffle:
+
+            zipped = np.concatenate((np.array(self.vidNames)[:,np.newaxis],\
+                                     np.array(self.img1List)[:,np.newaxis],np.array(self.img2List)[:,np.newaxis],np.array(self.img3List)[:,np.newaxis],\
+                                     np.array(self.targs1)[:,np.newaxis],np.array(self.targs2)[:,np.newaxis],np.array(self.targs3)[:,np.newaxis]),axis=1)
+
+            np.random.shuffle(zipped)
+            self.vidNames,self.img1List,self.img2List,self.img3List,self.targs1,self.targs2,self.targs3 = zipped.transpose()
+
+        self.currInd = 0
+        return self
+
+    def __next__(self):
+
+        if self.currInd >= len(self.img1List):
+            raise StopIteration
+
+        batchSize = min(self.batchSize,len(self.img1List)-self.currInd)
+
+        videoNames = self.vidNames[self.currInd:self.currInd+batchSize]
+        batchTens1 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img1List[self.currInd:self.currInd+batchSize])),dim=0)
+        batchTens2 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img2List[self.currInd:self.currInd+batchSize])),dim=0)
+        batchTens3 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img3List[self.currInd:self.currInd+batchSize])),dim=0)
+        targ1 = self.targs1[self.currInd:self.currInd+batchSize]
+        targ2 = self.targs2[self.currInd:self.currInd+batchSize]
+        targ3 = self.targs3[self.currInd:self.currInd+batchSize]
+
+        self.currInd += self.batchSize
+
+        return videoNames,batchTens1,batchTens2,batchTens3,targ1,targ2,targ3
+
 def main():
 
-    getMiddleFrames("OVSD")
+    loader = PairLoader("OVSD",1,(299,299),0,1,True)
 
+    for names,tens1,tens2,tens3,targ1,targ2,targ3 in loader:
+
+        print(tens1.sum(),tens2.sum(),tens3.sum(),targ1,targ2,targ3)
+        #sys.exit(0)
+    getMiddleFrames("OVSD")
 
 if __name__ == "__main__":
     main()
