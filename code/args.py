@@ -87,6 +87,9 @@ class ArgReader():
         # Training settings
         #parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
 
+        self.parser.add_argument('--log_interval', type=int, metavar='M',
+                            help='The number of batchs to wait between each console log')
+
         self.parser.add_argument('--nb_worse_epochs', type=float, metavar='M',
                             help='The number of epochs during which the performance on validation set can decrease without the training stops.')
         self.parser.add_argument('--epochs', type=int, metavar='N',
@@ -164,8 +167,6 @@ class ArgReader():
                             help='SGD momentum')
         self.parser.add_argument('--seed', type=int, metavar='S',
                             help='Seed used to initialise the random number generator.')
-        self.parser.add_argument('--log_interval', type=int, metavar='N',
-                            help='how many epochs to train before logging training status')
 
         self.parser.add_argument('--model_id', type=str, metavar='IND_ID',
                             help='the id of the individual model')
@@ -191,6 +192,11 @@ class ArgReader():
 
         self.parser.add_argument('--init_path', type=str,metavar='SM',
                     help='The path to the weight file to use to initialise the network')
+        self.parser.add_argument('--init_path_visual', type=str,metavar='SM',
+                    help='The path to the weight file to use to initialise the visual model')
+        self.parser.add_argument('--init_path_audio', type=str,metavar='SM',
+                    help='The path to the weight file to use to initialise the audio model')
+
 
         self.parser.add_argument('--noise', type=float, metavar='NOISE',
                     help='the amount of noise to add in the gradient of the model (as a percentage of the norm)(default: 0.1)')
@@ -203,6 +209,12 @@ class ArgReader():
 
         self.parser.add_argument('--audio_len', type=float,metavar='NOTE',
                             help="The length of the audio for each shot (in seconds)")
+        self.parser.add_argument('--margin', type=float,metavar='NOTE',
+                            help="The margin for the siamese network training.")
+        self.parser.add_argument('--dist_order', type=int,metavar='NOTE',
+                            help="The distance order to measure similarity for the siamese network.")
+        self.parser.add_argument('--mining_mode', type=str,metavar='MODE',
+                            help="The mining mode to use to train the siamese net. Can only be \'offline\'.")
 
         self.args = None
 
