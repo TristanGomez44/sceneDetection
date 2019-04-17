@@ -211,10 +211,34 @@ def frame_to_shots(dataset,vidName,scenesF):
         else:
             shotInd+=1
 
-    #scenesS = removeHolesScenes(np.array(scenesS))
-    #scenesS = removeHolesScenes(scenesS)
-
     return scenesS
+
+def shots_to_frames(dataset,vidName,scenesS):
+
+    ''' Computes scene boundaries file with shot index instead of frame index '''
+
+    #Getting the shot bounds with frame number
+    tree = ET.parse("../data/{}/{}/result.xml".format(dataset,vidName)).getroot()
+    shotsF = tree.find("content").find("body").find("shots")
+    frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
+
+    shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
+    shotsF.append(frameNb)
+
+    shotsF = np.array(shotsF)
+    shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
+
+    print(scenesS)
+    print(shotsF.shape)
+
+    scenes_startF = shotsF[:,0][scenesS[:,0].astype(int)]
+    scenes_endF = shotsF[:,1][scenesS[:,1].astype(int)]
+
+    scenesF = np.concatenate((scenes_startF[:,np.newaxis],scenes_endF[:,np.newaxis]),axis=1)
+    #sys.exit(0)
+
+    return scenesF
+
 
 def removeHolesScenes(scenesS):
     ''' Some scene boundaries file can be inconsistent : a scene can finish at frame/shot x
