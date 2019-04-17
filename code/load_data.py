@@ -285,8 +285,8 @@ class PairLoader():
     def __iter__(self):
 
         self.vidNames = []
-        self.img1List,self.img2List,self.img3List = [],[],[]
-        self.targs1,self.targs2,self.targs3 = [],[],[]
+        self.anchList,self.posList,self.negList = [],[],[]
+        self.anchTargList,self.posTargList,self.negTargList = [],[],[]
 
         for videoPath in self.videoPathLists:
             vidName = os.path.basename(os.path.splitext(videoPath)[0])
@@ -295,77 +295,66 @@ class PairLoader():
             sceneInds = np.cumsum(self.targetDict[vidName][:len(imagePathList)])
 
             #Building anchor tensor
-            img1List,targs1 = np.array(imagePathList),sceneInds
-            imageTarget1 = np.concatenate((img1List[:,np.newaxis],targs1[:,np.newaxis].astype(str)),axis=1)
+            anchList,anchTargList = np.array(imagePathList),sceneInds
+            anchorAndTarget = np.concatenate((anchList[:,np.newaxis],anchTargList[:,np.newaxis].astype(str)),axis=1)
 
             #Building positive tensor
-            #img2List,targs2 = img1List.copy(),targs1.copy()
-            #imageTarget2 = np.concatenate((img2List[:,np.newaxis],targs2[:,np.newaxis].astype(str)),axis=1)
-            imageTarget2 = np.zeros_like(imageTarget1)
-            for i in range(int(targs1[-1])+1):
-                #print("Scene")
-                imageTargScene = imageTarget1[imageTarget1[:,1].astype(float) == i]
-                #print(imageTargScene[:10])
+            posAndTarget = np.zeros_like(anchorAndTarget)
+            for i in range(int(anchTargList[-1])+1):
+                imageTargScene = anchorAndTarget[anchorAndTarget[:,1].astype(float) == i]
                 np.random.shuffle(imageTargScene)
-                #print(imageTargScene[:10])
-                imageTarget2[imageTarget1[:,1].astype(float) == i] = imageTargScene
-                #print(imageTarget2[:10])
+                posAndTarget[anchorAndTarget[:,1].astype(float) == i] = imageTargScene
 
-            #print(imageTarget2[:10])
-
-            img2List,targs2 = imageTarget2.transpose()
+            posList,posTargList = posAndTarget.transpose()
 
             #Buiding negative tensor
-            imageTarget3 = np.zeros_like(imageTarget1)
+            negAndTarget = np.zeros_like(anchorAndTarget)
 
-            for i in range(int(targs1[-1])+1):
+            for i in range(int(anchTargList[-1])+1):
 
-                imageTargDiff = imageTarget1[imageTarget1[:,1].astype(float) != i]
+                imageTargDiff = anchorAndTarget[anchorAndTarget[:,1].astype(float) != i]
                 np.random.shuffle(imageTargDiff)
 
-                imageTarget3[imageTarget1[:,1].astype(float) == i] = imageTargDiff[:(imageTarget1[:,1].astype(float) == i).sum()]
+                negAndTarget[anchorAndTarget[:,1].astype(float) == i] = imageTargDiff[:(anchorAndTarget[:,1].astype(float) == i).sum()]
 
-            img3List,targs3 = imageTarget3.transpose()
+            negList,negTargList = negAndTarget.transpose()
 
             self.vidNames.extend([vidName for i in range(len(imagePathList))])
-            self.img1List.extend(img1List)
-            self.img2List.extend(img2List)
-            self.img3List.extend(img3List)
-            self.targs1.extend(targs1)
-            self.targs2.extend(targs2)
-            self.targs3.extend(targs3)
-
-            #print("End")
-            #print(self.img1List[:10])
-            #print(self.img2List[:10])
-            #sys.exit(0)
+            self.anchList.extend(anchList)
+            self.posList.extend(posList)
+            self.negList.extend(negList)
+            self.anchTargList.extend(anchTargList)
+            self.posTargList.extend(posTargList)
+            self.negTargList.extend(negTargList)
 
         if self.shuffle:
 
             zipped = np.concatenate((np.array(self.vidNames)[:,np.newaxis],\
-                                     np.array(self.img1List)[:,np.newaxis],np.array(self.img2List)[:,np.newaxis],np.array(self.img3List)[:,np.newaxis],\
-                                     np.array(self.targs1)[:,np.newaxis],np.array(self.targs2)[:,np.newaxis],np.array(self.targs3)[:,np.newaxis]),axis=1)
+                                     np.array(self.anchList)[:,np.newaxis],np.array(self.posList)[:,np.newaxis],np.array(self.negList)[:,np.newaxis],\
+                                     np.array(self.anchTargList)[:,np.newaxis],np.array(self.posTargList)[:,np.newaxis],np.array(self.negTargList)[:,np.newaxis]),axis=1)
 
             np.random.shuffle(zipped)
-            self.vidNames,self.img1List,self.img2List,self.img3List,self.targs1,self.targs2,self.targs3 = zipped.transpose()
+            self.vidNames,self.anchList,self.posList,self.negList,self.anchTargList,self.posTargList,self.negTargList = zipped.transpose()
+
+        self.batchNb = len(self.vidNames)//self.batchSize
 
         self.currInd = 0
         return self
 
     def __next__(self):
 
-        if self.currInd >= len(self.img1List):
+        if self.currInd >= len(self.anchList):
             raise StopIteration
 
-        batchSize = min(self.batchSize,len(self.img1List)-self.currInd)
+        batchSize = min(self.batchSize,len(self.anchList)-self.currInd)
 
         videoNames = self.vidNames[self.currInd:self.currInd+batchSize]
-        batchTens1 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img1List[self.currInd:self.currInd+batchSize])),dim=0)
-        batchTens2 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img2List[self.currInd:self.currInd+batchSize])),dim=0)
-        batchTens3 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.img3List[self.currInd:self.currInd+batchSize])),dim=0)
-        targ1 = self.targs1[self.currInd:self.currInd+batchSize]
-        targ2 = self.targs2[self.currInd:self.currInd+batchSize]
-        targ3 = self.targs3[self.currInd:self.currInd+batchSize]
+        batchTens1 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.anchList[self.currInd:self.currInd+batchSize])),dim=0)
+        batchTens2 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.posList[self.currInd:self.currInd+batchSize])),dim=0)
+        batchTens3 = torch.cat(list(map(lambda x: self.preproc(Image.open(x)).unsqueeze(0),self.negList[self.currInd:self.currInd+batchSize])),dim=0)
+        targ1 = self.anchTargList[self.currInd:self.currInd+batchSize]
+        targ2 = self.posTargList[self.currInd:self.currInd+batchSize]
+        targ3 = self.negTargList[self.currInd:self.currInd+batchSize]
 
         self.currInd += self.batchSize
 
