@@ -13,6 +13,7 @@ import os
 import time
 
 import resnet
+import resnetSeg
 import googleNet
 from torch.nn import functional as F
 
@@ -20,6 +21,7 @@ import subprocess
 from torch import nn
 import vggish
 import vggish_input
+
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
 
     if featModelName == "resnet50":
@@ -42,6 +44,15 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
             checkpoint = torch.load("../models/"+model_file, map_location=lambda storage, loc: storage)
             state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
             featModel.load_state_dict(state_dict)
+        elif pretrainDataSet == "ADE20K":
+
+            orig_resnet = resnetSeg.resnet50(pretrained=False)
+            featModel = resnetSeg.ResnetSeg(orig_resnet)
+
+
+
+            featModel.load_state_dict(torch.load("../models/resnet50_ADE20K.pth"))
+
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
@@ -137,7 +148,7 @@ class DiagBlock():
                 indMax = min((i+1)*self.batchSize,len(filePathList))
 
                 tensorBatch = list(map(preprocc,filePathList[i*self.batchSize:indMax]))
-                print(tensorBatch[0].size())
+
                 tensorBatch = torch.cat(tensorBatch)
 
                 featBatch = featModel(tensorBatch).detach()
@@ -264,12 +275,16 @@ class DiagBlock():
 
 class CNN_RNN(nn.Module):
 
-
-    def __init__(self,featModelName,pretrainDataSetFeat,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual):
+    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual):
 
         super(CNN_RNN,self).__init__()
 
         self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat,layFeatCut)
+
+        if audioFeatModelName != "None":
+            self.audioFeatModel = buildAudioFeatModel(audioFeatModelName)
+        else:
+            self.audioFeatModel = None
 
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
@@ -277,6 +292,9 @@ class CNN_RNN(nn.Module):
             nbFeat = 256*2**(layFeatCut-1)
         elif featModelName=="googLeNet":
             nbFeat = 1024
+
+        if not self.audioFeatModel is None:
+            nbFeat += 128
 
         self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=0,bidirectional=bidirect)
 
@@ -287,7 +305,7 @@ class CNN_RNN(nn.Module):
 
         self.train_visual = train_visual
 
-    def forward(self,x):
+    def forward(self,x,audio):
 
         origBatchSize = x.size(0)
         origSeqLength = x.size(1)
@@ -299,9 +317,21 @@ class CNN_RNN(nn.Module):
         x = self.featModel(x)
         #print(x.size())
         x = x.view(origBatchSize,origSeqLength,-1)
+
+        if not self.audioFeatModel is None:
+            origBatchSize = audio.size(0)
+            origSeqLength = audio.size(1)
+
+            audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
+            audio = self.audioFeatModel(audio)
+            audio = audio.view(origBatchSize,origSeqLength,-1)
+
+            x = torch.cat((x,audio),dim=-1)
+
         #print(x.size())
         #x = x.permute(1,0,2)
         #print("Before rnn",x.size())
+
         x,_ = self.rnn(x)
         #print("After rnn",x.size())
         x = F.relu(x)
@@ -331,7 +361,7 @@ def findNumbers(x):
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
 def netBuilder(args):
-    net = CNN_RNN(args.feat,args.pretrain_dataset,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda,args.lay_feat_cut,args.train_visual)
+    net = CNN_RNN(args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda,args.lay_feat_cut,args.train_visual)
 
     return net
 
