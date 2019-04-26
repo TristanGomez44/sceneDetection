@@ -129,18 +129,18 @@ def comptGT_trueBaseline(truebaseFold,exp_id,dataset,resPath,frame):
     with open(resPath,"w") as text_file:
         print(resCSV,file=text_file)
 
-def binaryToMetrics(pred,target,seqLen):
+def binaryToMetrics(pred,target):
 
     predBounds = []
     targBounds = []
 
     for i in range(len(pred)):
 
-        pred_bounds = binaryToSceneBounds(pred[i][:seqLen[i]])
-        targ_bounds = binaryToSceneBounds(target[i][:seqLen[i]])
+        pred_bounds = binaryToSceneBounds(pred[i])
+        targ_bounds = binaryToSceneBounds(target[i])
 
-        print("pred",pred_bounds)
-        print("targ",targ_bounds)
+        #print("pred",pred_bounds)
+        #print("targ",targ_bounds)
 
         if len(targ_bounds) > 1:
             predBounds.append(pred_bounds)
@@ -178,16 +178,7 @@ def binaryToSceneBounds(scenesBinary):
 def frame_to_shots(dataset,vidName,scenesF):
     ''' Computes scene boundaries file with shot index instead of frame index '''
 
-    #Getting the shot bounds with frame number
-    tree = ET.parse("../data/{}/{}/result.xml".format(dataset,vidName)).getroot()
-    shotsF = tree.find("content").find("body").find("shots")
-    frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
-
-    shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
-    shotsF.append(frameNb)
-
-    shotsF = np.array(shotsF)
-    shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
+    shotsF = xmlToArray(dataset,vidName)
 
     #Computing scene boundaries with shot number instead of frame
     scenesS = []
@@ -217,16 +208,7 @@ def shots_to_frames(dataset,vidName,scenesS):
 
     ''' Computes scene boundaries file with shot index instead of frame index '''
 
-    #Getting the shot bounds with frame number
-    tree = ET.parse("../data/{}/{}/result.xml".format(dataset,vidName)).getroot()
-    shotsF = tree.find("content").find("body").find("shots")
-    frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
-
-    shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
-    shotsF.append(frameNb)
-
-    shotsF = np.array(shotsF)
-    shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
+    shotsF = xmlToArray(dataset,vidName)
 
     print(scenesS)
     print(shotsF.shape)
@@ -239,6 +221,24 @@ def shots_to_frames(dataset,vidName,scenesS):
 
     return scenesF
 
+def xmlToArray(dataset,vidName):
+
+    return xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
+
+def xmlToArray(xmlPath):
+
+    #Getting the shot bounds with frame number
+    tree = ET.parse(xmlPath).getroot()
+    shotsF = tree.find("content").find("body").find("shots")
+    frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
+
+    shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
+    shotsF.append(frameNb)
+
+    shotsF = np.array(shotsF)
+    shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
+
+    return shotsF
 
 def removeHolesScenes(scenesS):
     ''' Some scene boundaries file can be inconsistent : a scene can finish at frame/shot x
