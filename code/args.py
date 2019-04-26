@@ -142,7 +142,7 @@ class ArgReader():
         self.parser.add_argument('--img_width', type=int,metavar='WIDTH',
                             help='The width of the resized images')
         self.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
-                            help='The width of the resized images')
+                            help='The height of the resized images')
 
         self.parser.add_argument('--train_part_beg', type=float,metavar='START',
                             help='The (normalized) start position of the dataset to use for training')
