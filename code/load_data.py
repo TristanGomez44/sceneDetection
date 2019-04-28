@@ -396,11 +396,12 @@ class PairLoader():
 
         self.audioLen = audioLen
 
+        self.video = None
 
     def __iter__(self):
 
         self.audioDict = {}
-        self.videoDict = {}
+        #self.videoDict = {}
         self.fpsDict = {}
         self.fsDict = {}
 
@@ -500,14 +501,16 @@ class PairLoader():
 
     def readImage(self,x,i):
 
-        if not x[0] in self.videoDict.keys():
-            self.videoDict[x[0]] = pims.Video(x[0])
+        #if not x[0] in self.videoDict.keys():
+        #    self.videoDict[x[0]] = pims.Video(x[0])
+
+        self.video = pims.Video(x[0])
 
         #print(x)
         #print(self.videoDict[x[0]])
         #print(x[0])
 
-        return self.preproc(self.videoDict[x[0]][int(x[i])]).unsqueeze(0)
+        return self.preproc(self.video[int(x[i])]).unsqueeze(0)
 
     def readAudio(self,x,i):
 
