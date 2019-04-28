@@ -392,7 +392,11 @@ class PairLoader():
             self.targetDict[vidName] = getGT(dataset,vidName)
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+
+        if imgSize is None:
+            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
+        else:
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
 
         self.audioLen = audioLen
 
@@ -481,9 +485,12 @@ class PairLoader():
 
         videoNames = self.vidNames[self.currInd:self.currInd+batchSize]
 
-        audioTens1 = torch.cat(list(map(lambda x: self.readAudio(x,2),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-        audioTens2 = torch.cat(list(map(lambda x: self.readAudio(x,3),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-        audioTens3 = torch.cat(list(map(lambda x: self.readAudio(x,4),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
+        if self.audioLen > 0:
+            audioTens1 = torch.cat(list(map(lambda x: self.readAudio(x,2),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
+            audioTens2 = torch.cat(list(map(lambda x: self.readAudio(x,3),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
+            audioTens3 = torch.cat(list(map(lambda x: self.readAudio(x,4),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
+        else:
+            audioTens1,audioTens2,audioTens3 = None,None,None
 
         batchTens1 = torch.cat(list(map(lambda x: self.readImage(x,2),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
         batchTens2 = torch.cat(list(map(lambda x: self.readImage(x,3),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
@@ -546,7 +553,10 @@ class TrainLoader():
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+        if imgSize is None:
+            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
+        else:
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
 
 
     def __iter__(self):
@@ -647,7 +657,11 @@ class TestLoader():
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+        if imgSize is None:
+            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
+        else:
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+
         self.audioLen = audioLen
         self.nbShots =0
         for videoPath in self.videoPaths:
