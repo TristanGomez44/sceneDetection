@@ -180,6 +180,9 @@ class ArgReader():
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
 
+        self.parser.add_argument('--multi_gpu', type=str2bool, metavar='S',
+                            help='If cuda is true, run the computation with multiple gpu')
+
         self.parser.add_argument('--class_weight', type=float, metavar='S',
                             help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
                             makes weights proportional to the class instance number of the other class.')

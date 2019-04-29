@@ -13,6 +13,8 @@ import processResults
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 
+from nn import DataParallel
+
 import gc
 
 def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,intervToProcess,audioLen):
@@ -441,7 +443,7 @@ def main(argv=None):
                 audioLen = 0
 
             trainLoader = load_data.PairLoader(args.dataset_train,args.batch_size,img_size,args.train_part_beg,args.train_part_end,True,audioLen)
-            valLoader = load_data.PairLoader(args.dataset_val,args.val_batch_size,img_size,args.val_part_beg,args.val_part_end,False,audioLen)
+            valLoader = load_data.PairLoader(args.dataset_val,args.val_batch_size,img_size,args.val_part_beg,args.val_part_end,True,audioLen)
 
             trainFunc = epochSiam
             valFunc = epochSiam
@@ -465,6 +467,8 @@ def main(argv=None):
 
         if args.cuda:
             net = net.cuda()
+            if args.multi_gpu:
+                net = DataParallel(net)
 
         #Getting the contructor and the kwargs for the choosen optimizer
         optimConst,kwargsOpti = get_OptimConstructor_And_Kwargs(args.optim,args.momentum)
