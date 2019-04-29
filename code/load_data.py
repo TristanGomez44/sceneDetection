@@ -381,6 +381,8 @@ class PairLoader():
 
         self.batchSize = batchSize
         self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
+        self.videoPathLists = list(filter(lambda x:x.find(".xml") == -1,self.videoPathLists))
+
         nbVid = len(self.videoPathLists)
         self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
         print("Nb videos :",len(self.videoPathLists))
@@ -415,8 +417,9 @@ class PairLoader():
         self.anchTargList,self.posTargList,self.negTargList = [],[],[]
 
         for videoPath in self.videoPathLists:
-            vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
+            vidName = os.path.basename(os.path.splitext(videoPath)[0])
+            #print(vidName)
             shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
             shotInds = np.arange(len(shotBounds))
             shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
@@ -441,6 +444,7 @@ class PairLoader():
             #Buiding negative tensor
             negAndTarget = np.zeros_like(anchorAndTarget)
 
+            #print(anchorAndTarget)
             for i in range(int(anchTargList[-1])+1):
 
                 imageTargDiff = anchorAndTarget[anchorAndTarget[:,1].astype(float) != i]
@@ -540,6 +544,8 @@ class TrainLoader():
 
         self.batchSize = batchSize
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
+        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
+
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.imgSize = imgSize
         self.lMin,self.lMax = lMin,lMax
@@ -654,6 +660,8 @@ class TestLoader():
         self.evalL = evalL
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
+        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
+
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
