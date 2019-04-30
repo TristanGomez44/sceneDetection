@@ -113,268 +113,7 @@ def getMiddleFrames(dataset,audioLen=1):
             print(sceneTransition.nonzero())
 
             np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,videoName),sceneTransition)
-'''
-class SeqLoader():
 
-    def __init__(self,dataset,batchSize,lMin,lMax,imgSize,propStart,propEnd,shuffle,removeUselessSeq=True,visualFeat=True,audioFeat=False,audioLen=-1):
-
-        self.batchSize = batchSize
-        self.lMin = lMin
-        self.lMax = lMax
-        self.imgSize = imgSize
-        self.dataset = dataset
-        self.shuffle = shuffle
-        self.audioFeat = audioFeat
-        self.visualFeat = visualFeat
-        self.audioLen = audioLen
-        self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-
-        nbVid = len(self.videoPathLists)
-        if shuffle:
-            np.random.shuffle(self.videoPathLists)
-
-        self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
-        print("Nb videos :",len(self.videoPathLists))
-
-        self.framesDict = {}
-        self.targetDict = {}
-
-        self.removeUselessSeq = removeUselessSeq
-
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-        self.preproc = transforms.Compose([transforms.Resize(imgSize),transforms.ToTensor(),normalize])
-        self.preprocAudio = transforms.ToTensor()
-
-    def __iter__(self):
-
-        seqList = []
-        for videoPath in self.videoPathLists:
-
-            vidName = os.path.splitext(os.path.basename(videoPath))[0]
-
-            self.targetDict[vidName] = torch.tensor(np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName)))
-
-            if not vidName in self.framesDict:
-                self.framesDict[vidName]= np.array(sorted(glob.glob(os.path.splitext(videoPath)[0]+"/middleFrames/frame*.png"),key=modelBuilder.findNumbers))
-
-            frameInd = 0
-            frameNb = len(self.framesDict[vidName])
-
-            seqLengths = np.random.randint(self.lMin,self.lMax+1,size=(frameNb//self.lMin)+(frameNb%self.lMin!=0))
-
-            seqInds = np.cumsum(seqLengths)
-            seqInds = np.concatenate(([0],seqInds),axis=0)
-
-            #The number of the last sequence made with the video
-            lastSeqNb = np.where((seqInds >= frameNb-self.lMin))[0][0]
-
-            seqInds[-1] = frameNb
-
-            if self.shuffle:
-                seqInds = seqInds[:lastSeqNb+1]
-
-            starts = seqInds[:-1]
-            ends = seqInds[1:]
-
-            if self.removeUselessSeq:
-                starts,ends = self.removeUselessSeqFunc(starts,ends,self.targetDict[vidName])
-
-            if ends[-1]-starts[-1]+1 > self.lMax:
-                ends[-1] = starts[-1] + self.lMax -1
-
-            lengs = np.array(list(map(lambda x: x[1]-x[0]+1,list(zip(starts,ends)))))
-
-            names = np.array(vidName)[np.newaxis].repeat(len(seqInds)-1)
-
-            seqList.extend([{"vidName":vidName,"start":start,"end":end} for vidName,start,end in zip(names,starts,ends)])
-
-
-        self.seqList = np.array(seqList,dtype=object)
-
-        if self.shuffle:
-            np.random.shuffle(self.seqList)
-        self.currInd = 0
-
-        self.batchNb = len(self.seqList)//self.batchSize
-
-        return self
-
-    def __next__(self):
-
-        if self.currInd >= len(self.seqList):
-            raise StopIteration
-
-        batchSize = min(self.batchSize,len(self.seqList)-self.currInd)
-
-        if self.visualFeat:
-            videoTensor = torch.zeros((batchSize,self.lMax,3,self.imgSize[0],self.imgSize[1]))
-        else:
-            videoTensor = None
-
-        if self.audioFeat:
-            audioTensor = torch.zeros((batchSize,self.lMax,1,int(self.audioLen*96),64))
-        else:
-            audioTensor = None
-
-        if (not self.visualFeat) and (not self.audioFeat):
-            raise ValueError("At least one modality should be chosen among visual and audio")
-
-        targetTensor = torch.zeros((batchSize,self.lMax))
-        seqLenTensor = np.zeros((batchSize)).astype(int)
-        imagePathArray = []
-        i=0
-
-        seqList = self.seqList[self.currInd:self.currInd+batchSize]
-
-        for i,seq in enumerate(seqList):
-
-            imagePathArray.append(self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])
-
-            if self.visualFeat:
-                vidTens = torch.cat(list(map(lambda x:self.preproc(Image.open(x)).unsqueeze(0),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])),dim=0)
-                videoTensor[i,:len(vidTens)] = vidTens
-                sequenceLen = len(vidTens)
-
-            if self.audioFeat:
-                audioTens = torch.cat(list(map(lambda x:self.preprocAudio(vggish_input.wavfile_to_examples(x[:-3]+"wav")).permute(1,2,0).unsqueeze(0),self.framesDict[seq["vidName"]][seq["start"]:seq["end"]])),dim=0)
-                audioTensor[i,:len(audioTens)] = audioTens
-                sequenceLen = len(audioTens)
-
-            targs = self.targetDict[seq["vidName"]][seq["start"]:seq["end"]]
-            if targs[0] == 1:
-                targs[0] = 0
-            targetTensor[i,:sequenceLen] = targs
-            seqLenTensor[i] = sequenceLen
-
-
-        self.currInd += self.batchSize
-
-        return videoTensor,audioTensor,targetTensor,torch.tensor(seqLenTensor),imagePathArray
-
-    def removeUselessSeqFunc(self,starts,ends,targets):
-
-        starts_filt = []
-        ends_filt = []
-
-        for start,end in zip(starts,ends):
-            if targets[start] == 1:
-                targets[start] = 0
-
-            if targets[start:end+1].sum() > 0:
-                starts_filt.append(start)
-                ends_filt.append(end)
-
-        return starts_filt,ends_filt
-
-class TestSeqLoader():
-
-    def __init__(self,evalL,dataset,propStart,propEnd):
-
-        self.evalL = evalL
-        self.dataset = dataset
-        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
-
-    def __iter__(self):
-
-        self.videoInd = 0
-        self.shotInd = 0
-        return self
-    def __next__(self):
-
-        if self.videoInd == len(self.videoPaths):
-            raise StopIteration
-
-        L = self.evalL
-
-        videoPath = self.videoPaths[self.videoInd]
-        vidName = os.path.basename(os.path.splitext(videoPath)[0])
-
-        shotPaths = sorted(glob.glob("../data/{}/{}/image/*/*.pth".format(self.dataset,vidName)),key=modelBuilder.findNumbers)
-        shotPaths = shotPaths[self.shotInd:self.shotInd+L]
-
-        gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName))
-        gt = gt[self.shotInd:self.shotInd+L]
-
-        shots = torch.cat(list(map(lambda x: self.middleFrame(torch.load(x)).unsqueeze(0),shotPaths)),dim=0)
-
-        if self.shotInd + L >= len(shotPaths):
-            self.shotInd = 0
-            self.videoInd += 1
-
-        return shots,torch.tensor(gt)
-
-    def middleFrame(self,shot):
-
-        return shot[len(shot)//2]
-
-class TrainSeqLoader():
-
-    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize):
-
-        self.batchSize = batchSize
-        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
-        self.imgSize = imgSize
-        self.nbShots = 0
-        self.lMin,self.lMax = lMin,lMax
-        self.dataset = dataset
-        for videoPath in self.videoPaths:
-            videoFold = os.path.splitext(videoPath)[0]
-            self.nbShots += len(glob.glob(videoFold+"/image/*/*.pth"))
-
-        print("Number of total shots : ",self.nbShots)
-
-    def __iter__(self):
-
-        self.sumL = 0
-        return self
-    def __next__(self):
-
-        if self.sumL*self.batchSize > self.nbShots:
-            raise StopIteration
-
-        l = np.random.randint(self.lMin,self.lMax+1)
-        self.sumL += l
-
-        vidInds = self.nonRepRandInt(len(self.videoPaths),self.batchSize)
-
-        data = torch.zeros(self.batchSize,l,3,self.imgSize[0],self.imgSize[1])
-        targ = torch.zeros(self.batchSize,l)
-
-        for i,vidInd in enumerate(vidInds):
-
-            vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
-
-            print("../data/{}/{}/image/*/*.pth".format(self.dataset,vidName))
-            shotPaths = np.array(sorted(glob.glob("../data/{}/{}/image/*/*.pth".format(self.dataset,vidName)),key=modelBuilder.findNumbers))
-            gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(self.dataset,vidName))
-
-            zipped = np.concatenate((shotPaths[:,np.newaxis],gt[:,np.newaxis]),axis=1)
-            np.random.shuffle(zipped)
-
-            shotPaths,gt = zipped[:l].transpose()
-
-            frameSeq = torch.cat(list(map(lambda x:self.sampleAFrame(torch.load(x)).unsqueeze(0),shotPaths)),dim=0)
-
-            if frameSeq.size(1) != 3:
-                frameSeq = frameSeq.expand(frameSeq.size(0),3,frameSeq.size(2),frameSeq.size(3))
-
-            data[i] = frameSeq
-            targ[i] = torch.tensor(gt.astype(float).astype(int))
-
-        return data,targ
-
-    def sampleAFrame(self,x):
-        return x[np.random.randint(0,len(x))]
-
-    def nonRepRandInt(self,nbMax,size):
-        ints = np.arange(0,nbMax)
-        np.random.shuffle(ints)
-        ints = ints[:size]
-        return ints
-'''
 class PairLoader():
 
     def __init__(self,dataset,batchSize,imgSize,propStart,propEnd,shuffle,audioLen):
@@ -407,7 +146,7 @@ class PairLoader():
     def __iter__(self):
 
         self.audioDict = {}
-        #self.videoDict = {}
+        self.videoDict = {}
         self.fpsDict = {}
         self.fsDict = {}
 
@@ -512,16 +251,17 @@ class PairLoader():
 
     def readImage(self,x,i):
 
-        #if not x[0] in self.videoDict.keys():
-        #    self.videoDict[x[0]] = pims.Video(x[0])
+        if not x[0] in self.videoDict.keys():
+            self.videoDict[x[0]] = pims.Video(x[0])
 
-        self.video = pims.Video(x[0])
+        #self.video = pims.Video(x[0])
 
         #print(x)
         #print(self.videoDict[x[0]])
         #print(x[0])
 
-        return self.preproc(self.video[int(x[i])]).unsqueeze(0)
+        return self.preproc(self.videoDict[x[0]][int(x[i])]).unsqueeze(0)
+        #return torch.zeros((3,300,300)).unsqueeze(0)
 
     def readAudio(self,x,i):
 
