@@ -13,7 +13,7 @@ import processResults
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 
-from nn import DataParallel
+from torch.nn import DataParallel
 
 import gc
 
@@ -38,6 +38,19 @@ def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,inte
         diagBlock = modelBuilder.DiagBlock(cuda=cuda,batchSize=batchSize,feat=visualFeat,pretrainDataSet=pretrainSet,audioFeat=audioFeat)
 
         diagBlock.detectDiagBlock(imagePathList,audioPathList,"test_exp",1)
+
+def printAlloc(message):
+
+    res = []
+    for obj in gc.get_objects():
+        try:
+            if not (torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data))):
+                #print(type(obj), obj.size())
+                res.append(obj)
+        except:
+            pass
+
+    return res
 
 def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
 
@@ -64,9 +77,17 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
             if args.cuda:
                 anch,pos,neg = anch.cuda(),pos.cuda(),neg.cuda()
 
+            #allocBef = printAlloc("Before forward")
+            #allocBef = [hash(x) for x in allocBef]
+
             anchRep = model(anch)
             posRep = model(pos)
             negRep = model(neg)
+            #allocAft = printAlloc("After forward")
+
+
+            #newElem = [ x for x in allocAft if not (hash(x) in allocBef)]
+            #print(set(newElem))
 
             if not kwargs["audioModel"] is None:
                 anchAudRep = audioModel(anchAudio)
