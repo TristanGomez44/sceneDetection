@@ -112,6 +112,8 @@ class ArgReader():
                             help='The dropout amount on each layer of the RNN except the last one')
         self.parser.add_argument('--bidirect', type=str2bool,metavar='BIDIR',
                             help='If true, the RNN will be bi-bidirectional')
+        self.parser.add_argument('--redirect_out', type=str2bool,metavar='BIDIR',
+                            help='If true, the standard output will be redirected to a file python.out')
 
         self.parser.add_argument('--train_visual', type=str2bool,metavar='BOOL',
                             help='If true, the visual feature extractor will also be trained')
