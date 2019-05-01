@@ -397,6 +397,9 @@ def main(argv=None):
 
     args = argreader.args
 
+    if args.redirect_out:
+        sys.stdout = open("python.out", 'w')
+
     #The folders where the experience file will be written
     if not (os.path.exists("../vis/{}".format(args.exp_id))):
         os.makedirs("../vis/{}".format(args.exp_id))
