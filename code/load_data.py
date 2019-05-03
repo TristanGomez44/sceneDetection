@@ -116,7 +116,7 @@ def getMiddleFrames(dataset,audioLen=1):
 
 class PairLoader():
 
-    def __init__(self,dataset,batchSize,imgSize,propStart,propEnd,shuffle,audioLen):
+    def __init__(self,dataset,batchSize,imgSize,propStart,propEnd,shuffle,audioLen,resizeImage):
 
         self.batchSize = batchSize
         self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -134,7 +134,7 @@ class PairLoader():
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
-        if imgSize is None:
+        if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
@@ -280,7 +280,7 @@ class PairLoader():
 
 class TrainLoader():
 
-    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen):
+    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage):
 
         self.batchSize = batchSize
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -299,11 +299,10 @@ class TrainLoader():
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        if imgSize is None:
+        if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
-
 
     def __iter__(self):
 
@@ -396,7 +395,7 @@ class TrainLoader():
 
 class TestLoader():
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage):
         self.evalL = evalL
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -405,7 +404,7 @@ class TestLoader():
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        if imgSize is None:
+        if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
