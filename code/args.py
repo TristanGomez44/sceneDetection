@@ -142,9 +142,9 @@ class ArgReader():
                             help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
 
         self.parser.add_argument('--img_width', type=int,metavar='WIDTH',
-                            help='The width of the resized images')
+                            help='The width of the resized images, if resize_image is True, else, the size of the image')
         self.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
-                            help='The height of the resized images')
+                            help='The height of the resized images, if resize_image is True, else, the size of the image')
 
         self.parser.add_argument('--train_part_beg', type=float,metavar='START',
                             help='The (normalized) start position of the dataset to use for training')
@@ -181,6 +181,9 @@ class ArgReader():
 
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
+
+        self.parser.add_argument('--resize_image', type=str2bool, metavar='S',
+                            help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
 
         self.parser.add_argument('--multi_gpu', type=str2bool, metavar='S',
                             help='If cuda is true, run the computation with multiple gpu')
