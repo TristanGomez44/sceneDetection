@@ -303,7 +303,7 @@ class CNN_RNN(nn.Module):
 
         self.final = nn.Linear(1024,2)
 
-        self.relu = nn.ReLu()
+        self.relu = nn.ReLU()
         self.train_visual = train_visual
 
     def forward(self,x,audio):
