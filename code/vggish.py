@@ -32,7 +32,7 @@ https://github.com/tensorflow/models/blob/master/research/slim/nets/vgg.py
 """
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-
+from torch.nn import functional as F
 
 WEIGHT_URL = "https://users.cs.cf.ac.uk/taylorh23/pytorch/models/vggish-e3b372a4.pth"
 
@@ -51,6 +51,7 @@ class VGG(nn.Module):
             nn.Conv2d(512, 512, 3, 1, 1),
             nn.MaxPool2d(2, 2)
         )
+
         self.embeddings = nn.Sequential(
             nn.Linear(512*24, 4096),
             nn.Linear(4096, 4096),
@@ -58,9 +59,20 @@ class VGG(nn.Module):
             )
 
     def forward(self, x):
-        x = self.features(x)
+
+        x = self.features[1](F.relu(self.features[0](x)))
+        x = self.features[3](F.relu(self.features[2](x)))
+        x = F.relu(self.features[4](x))
+        x = self.features[6](F.relu(self.features[5](x)))
+        x = F.relu(self.features[7](x))
+        x = self.features[9](F.relu(self.features[8](x)))
+
         x = x.view(x.size(0), -1)
-        x = self.embeddings(x)
+
+        x = F.relu(self.embeddings[0](x))
+        x = F.relu(self.embeddings[1](x))
+        x = self.embeddings[2](x)
+
         return x
 
 
