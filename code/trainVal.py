@@ -90,12 +90,13 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
             #print(set(newElem))
 
             if not kwargs["audioModel"] is None:
+
+                if args.cuda:
+                    anchAudio,posAudio,negAudio = anchAudio.cuda(),posAudio.cuda(),negAudio.cuda()
+
                 anchAudRep = audioModel(anchAudio)
                 posAudRep = audioModel(posAudio)
                 negAudRep = audioModel(negAudio)
-
-                if args.cuda:
-                    anchAudRep,posAudRep,negAudRep = anchAudRep.cuda(),posAudRep.cuda(),negAudRep.cuda()
 
                 anchRep = torch.cat((anchRep,anchAudRep),dim=1)
                 posRep = torch.cat((posRep,posAudRep),dim=1)
@@ -502,6 +503,11 @@ def main(argv=None):
             net = net.cuda()
             if args.multi_gpu:
                 net = DataParallel(net)
+
+            if args.feat_audio != "None":
+                audioNet = audioNet.cuda()
+                if args.multi_gpu:
+                    audioNet = DataParallel(audioNet)
 
         #Getting the contructor and the kwargs for the choosen optimizer
         optimConst,kwargsOpti = get_OptimConstructor_And_Kwargs(args.optim,args.momentum)
