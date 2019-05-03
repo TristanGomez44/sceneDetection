@@ -270,13 +270,15 @@ class PairLoader():
         if not audioPath in self.audioDict.keys():
             tree = ET.parse("../data/{}/{}/result.xml".format(self.dataset,x[1])).getroot()
             fps = float(tree.find("content").find("head").find("media").find("fps").text)
-            audioData, fs = sf.read(audioPath)
+            audioData, fs = sf.read(audioPath,dtype='int16')
             self.audioDict[audioPath] = audioData
+
             self.fpsDict[audioPath] = fps
             self.fsDict[audioPath] = fs
 
         audioData = readAudio(self.audioDict[audioPath],int(x[i]),self.fpsDict[audioPath],self.fsDict[audioPath],self.audioLen)
-        return torch.tensor(vggish_input.waveform_to_examples(audioData,self.fsDict[audioPath])/32768.0).unsqueeze(0).float()
+
+        return torch.tensor(vggish_input.waveform_to_examples(audioData/32768.0,self.fsDict[audioPath])).unsqueeze(0).float()
 
 class TrainLoader():
 
