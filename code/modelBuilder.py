@@ -71,7 +71,8 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
 def buildAudioFeatModel(audioFeatModelName):
 
     if audioFeatModelName == "vggish":
-        model = vggish.vggish()
+        model = vggish.VGG()
+        model.load_state_dict(torch.load("../models/vggish.pth"))
     else:
         raise ValueError("Unkown audio feat model :",audioFeatModelName)
 
