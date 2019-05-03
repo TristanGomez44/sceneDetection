@@ -27,7 +27,9 @@ def main(argv=None):
     argreader.parser.add_argument('--annot_fold', type=str, metavar='N',help='To format the annotations file. The value is the path to the annotations folder')
     argreader.parser.add_argument('--base_fold', type=str, metavar='N',help='To format the baseline file. The value is the path to the baseline folder')
     argreader.parser.add_argument('--dataset', type=str, metavar='N',help='The dataset')
-    argreader.parser.add_argument('--format_holly2',action='store_true',help='Transform the hollywood2 dataset from videos to tensor')
+    argreader.parser.add_argument('--merge_videos',type=str, metavar='EXT',help='Accumulate the clips from a folder to obtain one video per movie in the dataset. The value \
+                                    is the extension of the video files, example : \'avi\'.')
+    argreader.parser.add_argument('--format_youtube',action='store_true',help='Put the clips into separate folder')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -59,7 +61,7 @@ def main(argv=None):
             print(filePath)
             np.savetxt(filePath,scenesS)
 
-    elif args.annot_fold:
+    if args.annot_fold:
 
         annotFilePaths = glob.glob(args.annot_fold+"/*_scenes.txt")
 
@@ -79,7 +81,7 @@ def main(argv=None):
             #filePath = args.annot_fold+"/"+vidName+"_scenes.csv"
             #np.savetxt(baseFilePath,scenesS)
 
-    elif args.base_fold:
+    if args.base_fold:
 
         baseFilePaths = glob.glob(args.base_fold+"/*_baseline.csv")
 
@@ -99,7 +101,27 @@ def main(argv=None):
             filePath = args.base_fold+"/"+vidName+"_baseline.csv"
             np.savetxt(baseFilePath,scenesS)
 
-    elif args.format_holly2:
+    if args.format_youtube:
+
+        for videoPath in sorted(glob.glob("../data/{}/*.*".format(args.dataset))):
+            print(videoPath)
+
+            if os.path.basename(videoPath).find("Trailer") == -1:
+                movieName = os.path.splitext(os.path.basename(videoPath).split("___")[-1].split("_Movie_Clip")[0])[0]
+                movieName = movieName.split("_(")[0]
+            else:
+                movieName = "Trailer"
+
+            folder = "../data/{}/{}".format(args.dataset,movieName)
+
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+
+            targetPath = folder+"/"+os.path.basename(videoPath)
+
+            os.rename(videoPath,targetPath)
+
+    if args.merge_videos:
 
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         if not os.path.exists("../data/{}/annotations".format(args.dataset)):
@@ -110,19 +132,19 @@ def main(argv=None):
 
         for videoFoldPath in videoFoldPaths:
             print(videoFoldPath)
-            accVidPath = videoFoldPath[:-1]+"_tmp.avi"
+            accVidPath = videoFoldPath[:-1]+"_tmp.{}".format(args.merge_videos)
 
             if not os.path.exists(accVidPath.replace("_tmp","")):
 
                 accumulatedVideo = None
                 gt = []
 
-                for videoPath in sorted(glob.glob(videoFoldPath+"/*.avi")):
+                for videoPath in sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos))):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
                     extractAudio(videoPath,videoFoldPath)
-                    accumulateAudio(videoPath.replace(".avi",".wav"),accVidPath.replace(".avi",".wav"))
+                    accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav"))
 
                     i=0
                     success=True
@@ -131,7 +153,10 @@ def main(argv=None):
 
                         if success:
                             if not accumulatedVideo:
-                                accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (args.img_width,args.img_heigth))
+                                if (not args.img_width) or (not args.img_heigth):
+                                    accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (imageRaw.shape[0],imageRaw.shape[1]))
+                                else:
+                                    accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (args.img_width,args.img_heigth))
 
                             imageRaw = (resize(imageRaw,(args.img_width,args.img_heigth,3),anti_aliasing=True,mode='constant')*255).astype("uint8")
 
@@ -156,10 +181,10 @@ def main(argv=None):
                 vidName = accVidPath.replace("_tmp","")
 
                 np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,os.path.basename(os.path.splitext(vidName)[0])),gt)
-                #accumulatedVideo.release()
+                accumulatedVideo.release()
 
                 os.rename(accVidPath,accVidPath.replace("_tmp",""))
-                #os.rename(accVidPath.replace(".avi",".wav"),accVidPath.replace(".avi",".wav").replace("_tmp",""))
+                os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
 
                 #Detecting shots
                 if not os.path.exists(videoFoldPath+"/result.xml"):
@@ -170,14 +195,20 @@ def extractAudio(videoPath,videoFoldPath):
     videoSubFold =  os.path.splitext(videoPath)[0]
     audioPath = videoSubFold+".wav"
 
-    if not os.path.exists(videoSubFold+"/result.xml"):
-        subprocess.run("shotdetect -i "+videoPath+" -o "+videoSubFold+" -f -l -m",shell=True)
-
     if not os.path.exists(audioPath):
-        tree = ET.parse(videoSubFold+"/result.xml").getroot()
-        audioInfStr = tree.find("content").find("head").find("media").find("codec").find("audio").text
+
+        subprocess.run("ffprobe "+videoPath+" 2> tmp.txt",shell=True)
+
+        audioInfStr = None
+        with open("tmp.txt") as metadata:
+            for line in metadata:
+                if line.find("Audio:") != -1:
+                    audioInfStr = line
+        if not audioInfStr:
+            raise ValueError("No audio data found in ffprobe output")
+
         audioSampleRate = int(audioInfStr.split(",")[1].replace(",","").replace("Hz","").replace(" ",""))
-        audioBitRate = int(audioInfStr.split(",")[4].replace(",","").replace("kb/s","").replace(" ",""))*1000
+        audioBitRate = int(audioInfStr.split(",")[4].replace(",","").replace("kb/s","").replace(" ","").replace("(default)\n",""))*1000
         command = "ffmpeg -loglevel panic -i {} -ab {} -ac 2 -ar {} -vn {}".format(videoPath,audioBitRate,audioSampleRate,audioPath)
         subprocess.call(command, shell=True)
 
