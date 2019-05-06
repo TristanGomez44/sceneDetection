@@ -282,7 +282,7 @@ class PairLoader():
 
 class TrainLoader():
 
-    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage):
+    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot):
 
         self.batchSize = batchSize
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -293,8 +293,9 @@ class TrainLoader():
         self.lMin,self.lMax = lMin,lMax
         self.dataset = dataset
         self.audioLen = audioLen
-
+        self.framesPerShot = framesPerShot
         self.nbShots = 0
+
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
             print(videoFold,"../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold)))
@@ -321,8 +322,8 @@ class TrainLoader():
 
         vidInds = self.nonRepRandInt(len(self.videoPaths),self.batchSize)
 
-        data = torch.zeros(self.batchSize,l,3,self.imgSize[0],self.imgSize[1])
-        audio = torch.zeros(self.batchSize,l,1,int(96*self.audioLen),64)
+        data = torch.zeros(self.batchSize,self.framesPerShot*l,3,self.imgSize[0],self.imgSize[1])
+        audio = torch.zeros(self.batchSize,self.framesPerShot*l,1,int(96*self.audioLen),64)
         targ = torch.zeros(self.batchSize,l)
         vidNames = []
 
@@ -360,7 +361,10 @@ class TrainLoader():
             gt[0] = 0
 
             shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-            frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample().long()
+            frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,)).long()
+
+            frameInds = frameInds.transpose(dim0=0,dim1=1)
+            frameInds = frameInds.contiguous().view(-1)
 
             video = pims.Video(self.videoPaths[vidInd])
             audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
@@ -397,13 +401,14 @@ class TrainLoader():
 
 class TestLoader():
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot):
         self.evalL = evalL
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
         self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
 
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
+        self.framesPerShot = framesPerShot
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -443,11 +448,11 @@ class TestLoader():
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,self.shotInd+L)
 
-        frameInds = self.middleFrames(shotBounds[shotInds])
+        frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
 
-        for j in range(len(frameInds)):
-            img = video[frameInds[j]]
-            cv2.imwrite('../vis/testImgPims_{}_{}.png'.format(j,shotInds[j]), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        #for j in range(len(frameInds)):
+        #    img = video[frameInds[j]]
+        #    cv2.imwrite('../vis/testImgPims_{}_{}.png'.format(j,shotInds[j]), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
@@ -464,6 +469,12 @@ class TestLoader():
         self.shotInd += L
 
         return frameSeq.unsqueeze(0),audioSeq.unsqueeze(0).float(),torch.tensor(gt).unsqueeze(0),[vidName]
+
+    def regularlySpacedFrames(self,shotBounds):
+
+        frameInds = ((np.arange(self.framesPerShot)/self.framesPerShot)[np.newaxis,:]*(shotBounds[:,1]-shotBounds[:,0])[:,np.newaxis]+shotBounds[:,0][:,np.newaxis]).astype(int)
+
+        return frameInds
 
     def middleFrames(self,shotBounds):
         starts = np.concatenate((shotBounds[:,0],[shotBounds[-1,1]]),axis=0)
@@ -526,26 +537,29 @@ def main():
 
         sys.exit(0)
     '''
-    '''
-    trainLoad = TrainLoader(1,"OVSD",0,0.5,10,20,(299,299),1)
+
+    trainLoad = TrainLoader(1,"OVSD",0,0.5,10,20,(299,299),1,True,3)
     for i,(data,audio,targ,vidName) in enumerate(trainLoad):
         print(data.size(),audio.size(),targ.size(),vidName)
 
         break
 
+    '''
 
-    testLoad = TestLoader(20,"OVSD",0,0.5,(299,299),1)
+    testLoad = TestLoader(20,"OVSD",0,0.5,(299,299),1,True,3)
     for i,(data,audio,targ,vidName) in enumerate(testLoad):
         print(data.size(),audio.size(),targ.size(),vidName)
 
         break
-
     '''
 
+
+    '''
     pairLoad = PairLoader("OVSD",16,(299,299),0,0.5,True,1)
     for videoNames,anch,pos,neg,anchAudio,posAudio,negAudio,targ1,targ2,targ3 in pairLoad:
         print(videoNames,anch.size(),anchAudio.size(),targ1.size())
         sys.exit(0)
+    '''
 
 if __name__ == "__main__":
     main()
