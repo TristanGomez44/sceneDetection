@@ -274,9 +274,22 @@ class DiagBlock():
         else:
             subprocess.run(["./baseline/build/baseline", "../results/{}_{}_simMat.csv".format(foldName,model_id),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cpu"])
 
+class simpleAttention(nn.Module):
+    def __init__(self,nbFeat,frameAttRepSize):
+
+        super(simpleAttention,self).__init__()
+
+        self.linear = nn.Linear(nbFeat,frameAttRepSize)
+        self.innerProdWeights = nn.Parameter(torch.randn(frameAttRepSize))
+
+    def forward(self,x):
+        x = torch.tanh(self.linear(x))
+        attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
+        return attWeights
+
 class CNN_RNN(nn.Module):
 
-    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual):
+    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual,framesPerShot,frameAttRepSize):
 
         super(CNN_RNN,self).__init__()
 
@@ -287,6 +300,8 @@ class CNN_RNN(nn.Module):
         else:
             self.audioFeatModel = None
 
+        self.framesPerShot = framesPerShot
+
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
         if featModelName=="resnet50":
@@ -296,6 +311,8 @@ class CNN_RNN(nn.Module):
 
         if not self.audioFeatModel is None:
             nbFeat += 128
+
+        self.frameAtt = simpleAttention(nbFeat,frameAttRepSize)
 
         self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=0,bidirectional=bidirect)
 
@@ -309,7 +326,7 @@ class CNN_RNN(nn.Module):
     def forward(self,x,audio):
 
         origBatchSize = x.size(0)
-        origSeqLength = x.size(1)
+        origSeqLength = x.size(1)//self.framesPerShot
         #print(x.size())
         x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
         #print(x.size())
@@ -317,19 +334,25 @@ class CNN_RNN(nn.Module):
         #print(x.size())
         x = self.featModel(x)
         #print(x.size())
-        x = x.view(origBatchSize,origSeqLength,-1)
 
         if not self.audioFeatModel is None:
-            origBatchSize = audio.size(0)
-            origSeqLength = audio.size(1)
-
             audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
             audio = self.audioFeatModel(audio)
-            audio = audio.view(origBatchSize,origSeqLength,-1)
 
             x = torch.cat((x,audio),dim=-1)
 
-        #print(x.size())
+        attWeights = self.frameAtt(x)
+
+        #Unflattening the sequence dimension
+        x = x.view(origBatchSize,origSeqLength*self.framesPerShot,-1)
+        attWeights = attWeights.view(origBatchSize,origSeqLength*self.framesPerShot,-1)
+
+        #Unflattening the frame dimension
+        x = x.view(origBatchSize,origSeqLength,self.framesPerShot,-1)
+        attWeights = attWeights.view(origBatchSize,origSeqLength,self.framesPerShot,1)
+
+        x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
+
         #x = x.permute(1,0,2)
         #print("Before rnn",x.size())
 
@@ -365,7 +388,8 @@ def findNumbers(x):
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
 def netBuilder(args):
-    net = CNN_RNN(args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,args.cuda,args.lay_feat_cut,args.train_visual)
+    net = CNN_RNN(args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
+                    args.cuda,args.lay_feat_cut,args.train_visual,args.frames_per_shot,args.frame_att_rep_size)
 
     return net
 

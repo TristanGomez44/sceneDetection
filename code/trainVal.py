@@ -148,10 +148,6 @@ def epochSeq(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mod
 
 
     model.train()
-    if args.train_visual:
-        model.featModel.train()
-    else:
-        model.featModel.eval()
 
     print("Epoch",epoch," : ",mode)
 
@@ -439,8 +435,7 @@ def main(argv=None):
             audioFeatModel = None
 
         img_size = (args.img_width,args.img_heigth)
-        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len)
-
+        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,1)
 
         evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,args.dataset_test,testLoader,args.cuda)
 
@@ -456,46 +451,47 @@ def main(argv=None):
         if args.cuda:
             torch.cuda.manual_seed(args.seed)
 
+        if args.feat_audio != "None":
+            audioNet = modelBuilder.buildAudioFeatModel(args.feat_audio)
+            audioLen = args.audio_len
+        else:
+            audioNet = None
+            audioLen = 0
+
         if args.train_siam:
 
             net = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
-
-            paramToOpti = []
-            for p in net.parameters():
-                paramToOpti.append(p)
-
-            if args.feat_audio != "None":
-                audioNet = modelBuilder.buildAudioFeatModel(args.feat_audio)
-                audioLen = args.audio_len
-                for p in audioNet.parameters():
-                    paramToOpti.append(p)
-            else:
-                audioNet = None
-                audioLen = 0
-
-            paramToOpti = (p for p in paramToOpti)
 
             trainLoader = load_data.PairLoader(args.dataset_train,args.batch_size,img_size,args.train_part_beg,args.train_part_end,True,audioLen,args.resize_image)
             valLoader = load_data.PairLoader(args.dataset_val,args.val_batch_size,img_size,args.val_part_beg,args.val_part_end,True,audioLen,args.resize_image)
 
             trainFunc = epochSiam
             valFunc = epochSiam
-            kwargs = {'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
+            kwargs = {'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode}
 
         else:
 
-            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,(args.img_width,args.img_heigth),args.audio_len,args.resize_image)
-            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image)
+            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot)
+            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot)
 
             #Building the net
             net = modelBuilder.netBuilder(args)
-            for p in net.parameters():
-                paramToOpti.append(p)
-            paramToOpti = (p for p in paramToOpti)
 
             trainFunc = epochSeq
             valFunc = epochSeq
             kwargs = {}
+
+        kwargs["audioModel"] = audioNet
+
+        paramToOpti = []
+        for p in net.parameters():
+            paramToOpti.append(p)
+
+        if args.feat_audio != "None":
+            for p in audioNet.parameters():
+                paramToOpti.append(p)
+
+        paramToOpti = (p for p in paramToOpti)
 
         img_size = (args.img_width,args.img_heigth)
 
