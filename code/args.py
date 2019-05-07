@@ -103,6 +103,8 @@ class ArgReader():
 
         self.parser.add_argument('--frames_per_shot', type=int, metavar='N',
                             help='The number of frame to use to represent each shot')
+        self.parser.add_argument('--frame_att_rep_size', type=int, metavar='N',
+                            help='The size of the internal representation of the frame attention model')
 
         self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                             help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \

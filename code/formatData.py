@@ -17,6 +17,11 @@ import cv2
 import xml.etree.ElementTree as ET
 from skimage.transform import resize
 
+import shotdetect
+
+
+CV_DEF_FPS = 30
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -178,17 +183,27 @@ def main(argv=None):
 
                 gt[-1,1] += 1
 
-                vidName = accVidPath.replace("_tmp","")
+                vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
 
-                np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,os.path.basename(os.path.splitext(vidName)[0])),gt)
+                np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName),gt)
                 accumulatedVideo.release()
 
                 os.rename(accVidPath,accVidPath.replace("_tmp",""))
                 os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
 
                 #Detecting shots
-                if not os.path.exists(videoFoldPath+"/result.xml"):
-                    subprocess.run("shotdetect -i "+accVidPath.replace("_tmp","")+" -o "+videoFoldPath+" -f -l -m",shell=True)
+                #if not os.path.exists(videoFoldPath+"/result.xml"):
+            vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
+            if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
+                shotBoundsTime = shotdetect.extract_shots_with_ffprobe(accVidPath.replace("_tmp",""))
+                shotBoundsFrame = (np.array(shotBoundsTime)*CV_DEF_FPS).astype(int)
+
+                frameNb = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName))[-1,1]
+                starts = np.concatenate(([0],shotBoundsFrame),axis=0)
+                ends =  np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
+                shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
+                np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
+                        #subprocess.run("shotdetect -i "+accVidPath.replace("_tmp","")+" -o "+videoFoldPath+" -f -l -m",shell=True)
 
 def extractAudio(videoPath,videoFoldPath):
     #Extracting audio
