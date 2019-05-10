@@ -22,12 +22,17 @@ from torch import nn
 import vggish
 import vggish_input
 
+from trainVal import printAlloc
+
+from torch.nn import DataParallel
+
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
 
     if featModelName == "resnet50":
 
         if pretrainDataSet == "imageNet":
-            featModel = resnet.resnet50(pretrained=True,layFeatCut=layFeatCut)
+            featModel = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut)
+            featModel.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
         elif pretrainDataSet == "places365":
             featModel = resnet.resnet50(pretrained=False,num_classes=365,layFeatCut=layFeatCut)
 
@@ -53,6 +58,14 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
 
             featModel.load_state_dict(torch.load("../models/resnet50_ADE20K.pth"))
 
+        else:
+            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
+
+    elif featModelName == "resnet101":
+
+        if pretrainDataSet == "imageNet":
+            featModel = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut)
+            featModel.load_state_dict(torch.load("../models/resnet101_imageNet.pth"))
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
@@ -289,14 +302,19 @@ class simpleAttention(nn.Module):
 
 class CNN_RNN(nn.Module):
 
-    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual,framesPerShot,frameAttRepSize):
+    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual,framesPerShot,frameAttRepSize,multiGPU):
 
         super(CNN_RNN,self).__init__()
 
         self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat,layFeatCut)
 
+        if multiGPU:
+            self.featModel = DataParallel(self.featModel,dim=0)
+
         if audioFeatModelName != "None":
             self.audioFeatModel = buildAudioFeatModel(audioFeatModelName)
+            if multiGPU:
+                self.audioFeatModel = DataParallel(self.audioFeatModel,dim=0)
         else:
             self.audioFeatModel = None
 
@@ -304,7 +322,7 @@ class CNN_RNN(nn.Module):
 
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
-        if featModelName=="resnet50":
+        if featModelName=="resnet50" or featModelName=="resnet101":
             nbFeat = 256*2**(layFeatCut-1)
         elif featModelName=="googLeNet":
             nbFeat = 1024
@@ -314,7 +332,7 @@ class CNN_RNN(nn.Module):
 
         self.frameAtt = simpleAttention(nbFeat,frameAttRepSize)
 
-        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=0,bidirectional=bidirect)
+        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
 
         self.dense = nn.Linear(hiddenSize*(bidirect+1),1024)
 
@@ -323,17 +341,26 @@ class CNN_RNN(nn.Module):
         self.relu = nn.ReLU()
         self.train_visual = train_visual
 
-    def forward(self,x,audio):
+        self.nb_gpus = torch.cuda.device_count()
 
+    def forward(self,x,audio,h=None,c=None):
+
+        #print("Beg : ",printAlloc())
+        #subprocess.call("nvidia-smi >> nvidia.txt", shell=True)
+        #print(x.size())
         origBatchSize = x.size(0)
         origSeqLength = x.size(1)//self.framesPerShot
+
         #print(x.size())
-        x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
+
+        #print(x.size())
+        x = x.contiguous().view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
         #print(x.size())
         #x = x.permute(0,3,1,2)
         #print(x.size())
         x = self.featModel(x)
-        #print(x.size())
+
+        #print("After cnn : ",printAlloc())
 
         if not self.audioFeatModel is None:
             audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
@@ -343,32 +370,37 @@ class CNN_RNN(nn.Module):
 
         attWeights = self.frameAtt(x)
 
-        #Unflattening the sequence dimension
-        x = x.view(origBatchSize,origSeqLength*self.framesPerShot,-1)
-        attWeights = attWeights.view(origBatchSize,origSeqLength*self.framesPerShot,-1)
 
-        #Unflattening the frame dimension
+        #print("Forward",h is None)
+        #print(x.size(),attWeights.size())
+
+        #Unflattening
         x = x.view(origBatchSize,origSeqLength,self.framesPerShot,-1)
         attWeights = attWeights.view(origBatchSize,origSeqLength,self.framesPerShot,1)
-
+        #print(x.size())
         x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
 
-        #x = x.permute(1,0,2)
-        #print("Before rnn",x.size())
+        if not h is None:
+            x,(h,c) = self.rnn(x,(h,c))
+        else:
+            x,(h,c) = self.rnn(x)
 
-        x,_ = self.rnn(x)
-        #print("After rnn",x.size())
+        #print("After RNN : ",printAlloc())
+
         x = self.relu(x)
 
         x = self.dense(x)
         x = self.relu(x)
 
         x = self.final(x)
+
+        #print(x.size())
+
         #print(x.size())
         #x = x.permute(1,0,2)
         #print(x.size())
         #sys.exit(0)
-        return x
+        return x,(h,c)
 
     def getParams(self):
 
@@ -389,7 +421,7 @@ def findNumbers(x):
 
 def netBuilder(args):
     net = CNN_RNN(args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.train_visual,args.frames_per_shot,args.frame_att_rep_size)
+                    args.cuda,args.lay_feat_cut,args.train_visual,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu)
 
     return net
 
