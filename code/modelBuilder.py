@@ -22,8 +22,6 @@ from torch import nn
 import vggish
 import vggish_input
 
-from trainVal import printAlloc
-
 from torch.nn import DataParallel
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
