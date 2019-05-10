@@ -21,6 +21,29 @@ import subprocess
 
 cudnn.enabled = False
 
+def softLoss(predBatch,targetBatch,width):
+
+    device = predBatch.device
+    softTargetBatch = torch.zeros_like(targetBatch)
+
+    for i,target in enumerate(targetBatch):
+
+        inds = torch.arange(len(target)).unsqueeze(1).to(device).float()
+        target[7] = 1
+
+        sceneChangeInds = target.nonzero().view(-1).unsqueeze(0).float()
+
+        #A matrix containing the triangular window applied to each one of the target
+        softTarg = F.relu(1-(1.0/(width+1))*torch.abs(inds-sceneChangeInds))
+
+        #Agregates the columns of the matrix
+        softTarg = softTarg.mean(dim=1)
+
+        #By doing this, the element in the original target equal to 1 stays equal to 1
+        softTargetBatch[i] = torch.max(softTarg,target)
+
+    return softTargetBatch
+
 def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,intervToProcess,audioLen):
 
     #Extract the middle frame first
@@ -153,7 +176,16 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
 
             output,_ = model(data,audio)
 
+            #Metrics
+            pred = torch.argmax(output.data,dim=-1)
+            cov,overflow = processResults.binaryToMetrics(pred,target)
+
+            total_cover += cov
+            total_overflow += overflow
+
             #Loss
+            if args.soft_loss:
+                target = softLoss(output,target,args.soft_loss_width)
 
             output_resh = output.view(output.size(0)*output.size(1),output.size(2))
             target_resh = target.view(target.size(0)*target.size(1))
@@ -163,13 +195,6 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
             loss.backward()
             optim.step()
             optim.zero_grad()
-
-            #Metrics
-            pred = torch.argmax(output.data,dim=-1)
-            cov,overflow = processResults.binaryToMetrics(pred,target)
-
-            total_cover += cov
-            total_overflow += overflow
 
             total_loss += loss.detach().data.item()
             validBatch += 1
@@ -213,13 +238,13 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
         output,h,c = output.data,h.data,c.data
 
         #Loss
-        output_resh = output.view(output.size(0)*output.size(1),output.size(2))
-        target_resh = target.view(target.size(0)*target.size(1))
+        if args.soft_loss:
+            target = softLoss(output,target,args.soft_loss_width)
+
         weights = getWeights(target,args.class_weight)
 
         updateOutDict(outDict,output,vidNames)
 
-        loss = F.cross_entropy(output_resh, target_resh.long(),weight=weights).data.item()
         #loss.backward()
         #optim.zero_grad()
 
@@ -228,6 +253,10 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             cov,overflow = processResults.binaryToMetrics(allPred,allTarget)
             total_cover += cov
             total_overflow += overflow
+
+            loss = F.cross_entropy(allPred.view(-1,allPred.size(2)),allTarget.view(-1).long(),weight=weights).detach().data.item()
+            total_loss += loss
+
             nbVideos += 1
 
         if newVideo:
@@ -237,9 +266,6 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
         else:
             allPred = torch.cat((allPred,torch.argmax(output,dim=-1)),dim=1)
             allTarget = torch.cat((allTarget,target),dim=1)
-
-        validBatch += 1
-        total_loss += loss
 
     if mode == "val":
         for key in outDict.keys():

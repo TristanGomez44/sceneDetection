@@ -229,6 +229,11 @@ class ArgReader():
         self.parser.add_argument('--mining_mode', type=str,metavar='MODE',
                             help="The mining mode to use to train the siamese net. Can only be \'offline\'.")
 
+        self.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
+                            help="To use target soften with a triangular kernel.")
+        self.parser.add_argument('--soft_loss_width', type=float,metavar='MODE',
+                            help="The width of the triangular window of the soft loss (in number of shots).")
+
         self.args = None
 
     def getRemainingArgs(self):
