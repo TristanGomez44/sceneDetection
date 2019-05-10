@@ -14,8 +14,12 @@ from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 
 from torch.nn import DataParallel
-
 import gc
+import torch.backends.cudnn as cudnn
+
+import subprocess
+
+cudnn.enabled = False
 
 def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,intervToProcess,audioLen):
 
@@ -38,19 +42,6 @@ def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,inte
         diagBlock = modelBuilder.DiagBlock(cuda=cuda,batchSize=batchSize,feat=visualFeat,pretrainDataSet=pretrainSet,audioFeat=audioFeat)
 
         diagBlock.detectDiagBlock(imagePathList,audioPathList,"test_exp",1)
-
-def printAlloc(message):
-
-    res = []
-    for obj in gc.get_objects():
-        try:
-            if not (torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data))):
-                #print(type(obj), obj.size())
-                res.append(obj)
-        except:
-            pass
-
-    return res
 
 def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
 
@@ -77,17 +68,9 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
             if args.cuda:
                 anch,pos,neg = anch.cuda(),pos.cuda(),neg.cuda()
 
-            #allocBef = printAlloc("Before forward")
-            #allocBef = [hash(x) for x in allocBef]
-
             anchRep = model(anch)
             posRep = model(pos)
             negRep = model(neg)
-            #allocAft = printAlloc("After forward")
-
-
-            #newElem = [ x for x in allocAft if not (hash(x) in allocBef)]
-            #print(set(newElem))
 
             if not kwargs["audioModel"] is None:
 
@@ -131,8 +114,9 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
 
     if mode == "train":
         torch.save(model.state_dict(), "../models/{}/{}_siam_epoch{}".format(args.exp_id,args.model_id, epoch))
+        torch.save(audioModel.state_dict(), "../models/{}/{}_siam_audio_epoch{}".format(args.exp_id,args.model_id, epoch))
 
-    writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batch_idx+1,writer,epoch,mode,args.model_id)
+    writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batch_idx+1,writer,epoch,mode,args.model_id,args.exp_id)
 
 def compDistMat(feat):
 
@@ -144,8 +128,7 @@ def compDistMat(feat):
 
     simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
 
-def epochSeq(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode):
-
+def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode):
 
     model.train()
 
@@ -156,51 +139,128 @@ def epochSeq(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mod
     total_overflow = 0
     validBatch = 0
 
-    for batch_idx, (data, audio,target,_) in enumerate(loader):
+    for batch_idx, (data, audio,target,vidNames) in enumerate(loader):
 
         if target.sum() > 0:
+
             if (batch_idx % log_interval == 0):
                 print("\t",loader.sumL+1,"/",loader.nbShots)
 
             if args.cuda:
-                data,audio, target = data.cuda(), audio.cuda(),target.cuda()
-            output = model(data,audio)
+                data, target = data.cuda(), target.cuda()
+                if not audio is None:
+                    audio = audio.cuda()
+
+            output,_ = model(data,audio)
 
             #Loss
+
             output_resh = output.view(output.size(0)*output.size(1),output.size(2))
             target_resh = target.view(target.size(0)*target.size(1))
             weights = getWeights(target,args.class_weight)
-            #print(weights)
-            #print(data.size(1))
-            #print(F.softmax(output,dim=-1))
-            #print(torch.argmax(F.softmax(output,dim=-1),dim=-1))
-            #print(target)
-            #print(target_resh)
+
             loss = F.cross_entropy(output_resh, target_resh.long(),weight=weights)
-            #loss = torch.pow(F.softmax(output,dim=-1)[:,:,1],2).sum()
-            if mode == "train":
-                loss.backward()
-                optim.step()
-                optim.zero_grad()
-            else:
-                loss.backward()
-                optim.zero_grad()
+            loss.backward()
+            optim.step()
+            optim.zero_grad()
 
             #Metrics
-            pred = torch.argmax(F.softmax(output,dim=-1),dim=-1)
+            pred = torch.argmax(output.data,dim=-1)
             cov,overflow = processResults.binaryToMetrics(pred,target)
+
             total_cover += cov
             total_overflow += overflow
-            total_loss += loss
+
+            total_loss += loss.detach().data.item()
             validBatch += 1
 
-        #if batch_idx == 3:
-        #    break
+    torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
+    writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
 
-    if mode =="train":
-        torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
+def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode):
 
-    writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id)
+    model.eval()
+
+    print("Epoch",epoch," : ",mode)
+
+    total_loss,total_cover,total_overflow,nbVideos = 0,0,0,0
+
+    outDict = {}
+    currVidName = "None"
+    videoBegining = True
+    validBatch = 0
+    nbVideos = 0
+
+    for batch_idx, (data, audio,target,vidNames) in enumerate(loader):
+
+        newVideo = (vidNames[0] != currVidName) or videoBegining
+        currVidName = vidNames[0]
+
+        if (batch_idx % log_interval == 0):
+            print("\t",loader.sumL+1,"/",loader.nbShots)
+
+        if args.cuda:
+            data, target = data.cuda(), target.cuda()
+            if not audio is None:
+                audio = audio.cuda()
+        #print(data.size())
+
+        if newVideo:
+            output,(h,c) = model(data,audio)
+        else:
+            output,(h,c) = model(data,audio,h,c)
+
+        output,h,c = output.data,h.data,c.data
+
+        #Loss
+        output_resh = output.view(output.size(0)*output.size(1),output.size(2))
+        target_resh = target.view(target.size(0)*target.size(1))
+        weights = getWeights(target,args.class_weight)
+
+        updateOutDict(outDict,output,vidNames)
+
+        loss = F.cross_entropy(output_resh, target_resh.long(),weight=weights).data.item()
+        #loss.backward()
+        #optim.zero_grad()
+
+        #Metrics
+        if newVideo and not videoBegining:
+            cov,overflow = processResults.binaryToMetrics(allPred,allTarget)
+            total_cover += cov
+            total_overflow += overflow
+            nbVideos += 1
+
+        if newVideo:
+            allPred = torch.argmax(output,dim=-1)
+            allTarget = target
+            videoBegining = False
+        else:
+            allPred = torch.cat((allPred,torch.argmax(output,dim=-1)),dim=1)
+            allTarget = torch.cat((allTarget,target),dim=1)
+
+        validBatch += 1
+        total_loss += loss
+
+    if mode == "val":
+        for key in outDict.keys():
+            np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),outDict[key].cpu().detach().numpy())
+    elif mode == "test":
+        for key in outDict.keys():
+            np.savetxt("../results/{}/{}_{}.csv".format(args.exp_id,args.model_id,key),outDict[key].cpu().detach().numpy())
+
+    writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id,args.exp_id,nbVideos=nbVideos)
+
+def updateOutDict(outDict,output,vidNames):
+
+    vidName = vidNames[0]
+
+    softm_output = F.softmax(output,dim=-1)
+
+    if vidName in outDict.keys():
+        outDict[vidName] = torch.cat((softm_output[0,:,1],outDict[vidName]),dim=0)
+
+    else:
+        outDict[vidName] = softm_output[0,:,1]
 
 def getWeights(target,classWeight):
 
@@ -217,7 +277,7 @@ def getWeights(target,classWeight):
 
     return weights
 
-def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,writer,epoch,mode,model_id):
+def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,writer,epoch,mode,model_id,exp_id):
 
     total_loss /= batchNb
     total_posDist /= batchNb
@@ -229,20 +289,22 @@ def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,wr
     writer.add_scalars('Pos_dist',{model_id+"_"+mode:total_posDist},epoch)
     writer.add_scalars('Neg_dist',{model_id+"_"+mode:total_negDist},epoch)
 
-    if not os.path.exists("../results/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode)):
+    if not os.path.exists("../results/{}/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode)):
         header = "epoch,loss,accuracy,posDist,negDist"
     else:
         header = ""
 
-    with open("../results/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode),"a") as text_file:
+    with open("../results/{}/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode),"a") as text_file:
         print(header,file=text_file)
         print("{},{},{},{},{}".format(epoch,total_loss,accuracy,total_posDist,total_negDist),file=text_file)
 
-def writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,model_id):
+def writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,model_id,exp_id,nbVideos=None):
 
     total_loss /= validBatch
-    total_cover /= validBatch
-    total_overflow /= validBatch
+
+    sampleNb = validBatch if mode == "train" else nbVideos
+    total_cover /= sampleNb
+    total_overflow /= sampleNb
     f_score = 2*total_cover*(1-total_overflow)/(total_cover+1-total_overflow)
 
     writer.add_scalars('Losses',{model_id+"_"+mode:total_loss},epoch)
@@ -250,12 +312,12 @@ def writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch
     writer.add_scalars('Overflows',{model_id+"_"+mode:total_overflow},epoch)
     writer.add_scalars('F-scores',{model_id+"_"+mode:f_score},epoch)
 
-    if not os.path.exists("../results/model{}_epoch{}_metrics_{}.csv".format(model_id,epoch,mode)):
+    if not os.path.exists("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode)):
         header = "epoch,loss,coverage,overflow,f-score"
     else:
         header = ""
 
-    with open("../results/model{}_epoch{}_metrics_{}.csv".format(model_id,epoch,mode),"a") as text_file:
+    with open("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode),"a") as text_file:
         print(header,file=text_file)
         print("{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score),file=text_file)
 
@@ -457,6 +519,7 @@ def main(argv=None):
         else:
             audioNet = None
             audioLen = 0
+        paramToOpti = []
 
         if args.train_siam:
 
@@ -467,29 +530,28 @@ def main(argv=None):
 
             trainFunc = epochSiam
             valFunc = epochSiam
-            kwargs = {'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode}
+            kwargs = {'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
+            if args.feat_audio != "None":
+                for p in audioNet.parameters():
+                    paramToOpti.append(p)
 
+            if args.cuda and args.feat_audio != "None":
+                audioNet = audioNet.cuda()
         else:
 
-            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot)
-            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot)
+            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,(args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot)
+            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot)
 
             #Building the net
             net = modelBuilder.netBuilder(args)
 
-            trainFunc = epochSeq
-            valFunc = epochSeq
+            trainFunc = epochSeqTr
+            valFunc = epochSeqVal
             kwargs = {}
 
-        kwargs["audioModel"] = audioNet
 
-        paramToOpti = []
         for p in net.parameters():
             paramToOpti.append(p)
-
-        if args.feat_audio != "None":
-            for p in audioNet.parameters():
-                paramToOpti.append(p)
 
         paramToOpti = (p for p in paramToOpti)
 
@@ -497,13 +559,6 @@ def main(argv=None):
 
         if args.cuda:
             net = net.cuda()
-            if args.multi_gpu:
-                net = DataParallel(net)
-
-            if args.feat_audio != "None":
-                audioNet = audioNet.cuda()
-                if args.multi_gpu:
-                    audioNet = DataParallel(audioNet)
 
         #Getting the contructor and the kwargs for the choosen optimizer
         optimConst,kwargsOpti = get_OptimConstructor_And_Kwargs(args.optim,args.momentum)
@@ -533,8 +588,9 @@ def main(argv=None):
                 if lrCounter<len(args.lr)-1:
                     lrCounter += 1
 
-            valFunc(net,optim,args.log_interval,valLoader,epoch,args,writer,kwargs,"val")
             trainFunc(net,optim,args.log_interval,trainLoader,epoch,args,writer,kwargs,"train")
+            valFunc(net,optim,args.log_interval,valLoader,epoch,args,writer,kwargs,"val")
+
             #val(net,optim,valLoader,epoch,args,writer,5)
 
 if __name__ == "__main__":
