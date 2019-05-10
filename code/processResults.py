@@ -47,23 +47,8 @@ def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
                 print("\tT-sne already done")
         else:
             print("\tFeature for video does not {} exist".format(videoName))
-def plotSceneBounds(simMatPath, modelCutPath,outPath):
 
-    sceneCuts = np.genfromtxt(modelCutPath)
-
-    simMat = np.genfromtxt(simMatPath)
-
-    plt.figure()
-    plt.imshow(simMat.astype(int), cmap='gray', interpolation='nearest')
-
-    for sceneCut in sceneCuts:
-        plt.plot([sceneCut-10,sceneCut+10],[sceneCut+10,sceneCut-10],"-",color="red")
-
-    plt.xlim(0,len(simMat))
-    plt.ylim(len(simMat),0)
-    plt.savefig(outPath)
-
-def compGT(exp_id,metric):
+def compGT(exp_id,metric,thres):
 
     modelIniPaths = glob.glob("../models/{}/*.ini".format(exp_id))
     metricFunc = globals()[metric]
@@ -74,7 +59,7 @@ def compGT(exp_id,metric):
 
         modelId = os.path.basename(modelIniPath.replace(".ini",""))
 
-        sceneCutsPathList = glob.glob("../results/{}/*_{}.csv".format(exp_id,modelId))
+        sceneCutsPathList = glob.glob("../results/{}/{}_*.csv".format(exp_id,modelId))
         print(sceneCutsPathList)
         metricsArr=np.zeros(len(sceneCutsPathList))
         for i,sceneCutsPath in enumerate(sceneCutsPathList):
@@ -82,14 +67,14 @@ def compGT(exp_id,metric):
             vidName = "_".join(os.path.basename(sceneCutsPath).split("_")[:-1])
 
             gtCuts = np.genfromtxt("../data/{}_cuts.csv".format(vidName))
-            sceneCuts = np.genfromtxt(sceneCutsPath)
+            sceneCuts = (np.genfromtxt(sceneCutsPath) > thres)
 
             metricsArr[i] = metricFunc(gtCuts,sceneCuts)
 
-        metrics_mean = iou.mean()
-        metrics_std = iou.std()
+        metrics_mean = metricsArr.mean()
+        metrics_std = metricsArr.std()
 
-        csv += modelId+","+str(metrics_mean)+"\pm"+str(metrics_std  )+"\n"
+        csv += modelId+","+str(metrics_mean)+"\pm"+str(metrics_std)+"\n"
 
     with open("../results/{}/{}.csv".format(exp_id,metric),"w") as csvFile:
         print(csv,file=csvFile)
@@ -154,6 +139,7 @@ def binaryToMetrics(pred,target):
 
         cov_val += cov_sam
         overflow_val += overf_sam
+
 
     cov_val /= len(targBounds)
     overflow_val /= len(targBounds)
@@ -227,18 +213,21 @@ def xmlToArray(dataset,vidName):
 
 def xmlToArray(xmlPath):
 
-    #Getting the shot bounds with frame number
-    tree = ET.parse(xmlPath).getroot()
-    shotsF = tree.find("content").find("body").find("shots")
-    frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
+    if os.path.exists(xmlPath):
+        #Getting the shot bounds with frame number
+        tree = ET.parse(xmlPath).getroot()
+        shotsF = tree.find("content").find("body").find("shots")
+        frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
 
-    shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
-    shotsF.append(frameNb)
+        shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
+        shotsF.append(frameNb)
 
-    shotsF = np.array(shotsF)
-    shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
+        shotsF = np.array(shotsF)
+        shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
 
-    return shotsF
+        return shotsF
+    else:
+        return np.genfromtxt(xmlPath.replace(".xml",".csv"))
 
 def removeHolesScenes(scenesS):
     ''' Some scene boundaries file can be inconsistent : a scene can finish at frame/shot x
@@ -366,10 +355,6 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--plot_scenebounds',nargs=3,type=str,metavar='RESFILE',help='To plot the scene boundaries found by a model in an experiment. \
-                                    The argument value is the path to the similarity matrix. The second value is the path to the cut found by the model and the last is the path\
-                                    to the output image file.')
-
     argreader.parser.add_argument('--comp_gt',action='store_true',help='To compare the performance of models in an experiment with the ground truth. The --exp_id argument\
                                     must be set. ')
 
@@ -390,9 +375,6 @@ def main(argv=None):
 
     #Getting the args from command line and config file
     args = argreader.args
-
-    if args.plot_scenebounds:
-        plotSceneBounds(args.plot_scenebounds[0],args.plot_scenebounds[1],args.plot_scenebounds[2])
 
     if args.comp_gt:
         compGT(args.exp_id,args.metric)
