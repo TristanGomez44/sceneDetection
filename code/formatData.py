@@ -16,9 +16,8 @@ from PIL import Image
 import cv2
 import xml.etree.ElementTree as ET
 from skimage.transform import resize
-
+import sys
 import shotdetect
-
 
 CV_DEF_FPS = 30
 
@@ -108,14 +107,31 @@ def main(argv=None):
 
     if args.format_youtube:
 
-        for videoPath in sorted(glob.glob("../data/{}/*.*".format(args.dataset))):
+        #Removing non-scene video (montages, trailer etc.)
+        videoPaths = sorted(glob.glob("../data/{}/*.*".format(args.dataset)))
+        print(videoPaths)
+        videoToRm = list(filter(lambda x:os.path.basename(x).find("Trailer") != -1 \
+                                      or os.path.basename(x).find("MASHUP") != -1\
+                                      or os.path.basename(x).find("Tribute") != -1,videoPaths))
+
+        for videoPath in videoToRm:
+            os.remove(videoPath)
+
+        #Removing bad characters
+        videoPaths = sorted(glob.glob("../data/{}/*.*".format(args.dataset)))
+        for videoPath in videoPaths:
+            if videoPath.find(" ") != -1 or videoPath.find("(") != -1 or videoPath.find(")") != -1:
+                os.rename(videoPath,videoPath.replace(" ","_").replace("(","").replace(")","").replace("'",""))
+
+        #Grouping clip by movie
+        for videoPath in videoPaths:
             print(videoPath)
 
-            if os.path.basename(videoPath).find("Trailer") == -1:
+            if args.dataset != "youtube_large":
                 movieName = os.path.splitext(os.path.basename(videoPath).split("___")[-1].split("_Movie_Clip")[0])[0]
                 movieName = movieName.split("_(")[0]
             else:
-                movieName = "Trailer"
+                movieName = os.path.splitext(os.path.basename(videoPath))[0].split("_-_")[0]
 
             folder = "../data/{}/{}".format(args.dataset,movieName)
 
@@ -143,13 +159,40 @@ def main(argv=None):
 
                 accumulatedVideo = None
                 gt = []
+                accAudioData = None
 
                 for videoPath in sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos))):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
-                    extractAudio(videoPath,videoFoldPath)
-                    accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav"))
+                    print("Extracting audio")
+                    audioData = extractAudio(videoPath,videoFoldPath)
+                    print("Accumulating audio")
+                    accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
+
+                    print("Getting number of frames")
+                    #Getting the number of frames of the video
+                    subprocess.call("ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(videoPath),shell=True)
+                    nbFrames = np.genfromtxt("nbFrames.txt")
+                    print("{} has {} frames".format(os.path.basename(videoPath),nbFrames))
+
+                    subprocess.call("ffmpeg -i {} 2>info.txt".format(videoPath),shell=True)
+                    with open('info.txt', 'r') as infoFile:
+                        infos = infoFile.read()
+
+                    fps = round(float(infos.split("\n")[18].split(",")[5].replace(" ","").replace("fps","")))
+
+                    print("{} has {} frame per second".format(os.path.basename(videoPath),fps))
+
+                    if args.dataset == "youtube_large":
+                        if videoPath.find("Movie_CLIP") != -1:
+                            stopFrame = nbFrames-32*fps
+                        elif videoPath.find("Movieclips") != -1:
+                            stopFrame = nbFrames-12*fps
+                        else:
+                            raise ValueError("Unkown title format for video",videoPath)
+                    else:
+                        stopFrame = nbFrames
 
                     i=0
                     success=True
@@ -163,6 +206,10 @@ def main(argv=None):
                                 else:
                                     accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (args.img_width,args.img_heigth))
 
+                            #Removing the black areas in the video and the "movie clip" symbol in the bottom
+                            if args.dataset == "youtube_large":
+                                imageRaw = imageRaw[50:-50]
+
                             imageRaw = (resize(imageRaw,(args.img_width,args.img_heigth,3),anti_aliasing=True,mode='constant')*255).astype("uint8")
 
                             accumulatedVideo.write(imageRaw)
@@ -173,6 +220,12 @@ def main(argv=None):
                                 gt.append(0)
 
                             i += 1
+
+                            if i>=stopFrame:
+                                success = False
+
+                sf.write(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData,fs)
+                sys.exit(0)
 
                 lastFram = len(gt)
                 gt = np.array(gt).nonzero()[0]
@@ -227,16 +280,16 @@ def extractAudio(videoPath,videoFoldPath):
         command = "ffmpeg -loglevel panic -i {} -ab {} -ac 2 -ar {} -vn {}".format(videoPath,audioBitRate,audioSampleRate,audioPath)
         subprocess.call(command, shell=True)
 
-def accumulateAudio(audioPath,accAudioPath):
+def accumulateAudio(audioPath,accAudioData):
 
-    if not os.path.exists(accAudioPath):
+    if accAudioData is None:
         audioData, fs = sf.read(audioPath)
         accAudioData = audioData
-        sf.write(accAudioPath, accAudioData, fs)
     else:
         audioData, fs = sf.read(audioPath)
-        accAudioData, fs = sf.read(accAudioPath)
         accAudioData = np.concatenate((accAudioData,audioData),axis=0)
-        sf.write(accAudioPath, accAudioData, fs)
+
+    return accAudioData,fs
+
 if __name__ == "__main__":
     main()
