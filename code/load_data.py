@@ -33,7 +33,7 @@ def getMiddleFrames(dataset,audioLen=1):
 
         dirname = "../data/{}/{}/".format(dataset,os.path.splitext(os.path.basename(videoPath))[0])
         if not os.path.exists(dirname+"/middleFrames/"):
-            print(videoPath)
+            #print(videoPath)
 
             videoName = os.path.splitext(os.path.basename(videoPath))[0]
 
@@ -164,7 +164,6 @@ class PairLoader():
             shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
             frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample().long()
 
-            #imagePathList = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/{}/middleFrames/*.*".format(self.dataset,vidName)))))
             sceneInds = np.cumsum(self.targetDict[vidName])
 
             #Building anchor tensor
@@ -298,7 +297,6 @@ class TrainLoader():
 
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
-            print(videoFold,"../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold)))
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -323,9 +321,13 @@ class TrainLoader():
         vidInds = self.nonRepRandInt(len(self.videoPaths),self.batchSize)
 
         data = torch.zeros(self.batchSize,self.framesPerShot*l,3,self.imgSize[0],self.imgSize[1])
-        audio = torch.zeros(self.batchSize,self.framesPerShot*l,1,int(96*self.audioLen),64)
         targ = torch.zeros(self.batchSize,l)
         vidNames = []
+
+        if self.audioLen > 0:
+            audio = torch.zeros(self.batchSize,self.framesPerShot*l,1,int(96*self.audioLen),64).float()
+        else:
+            audio = None
 
         for i,vidInd in enumerate(vidInds):
 
@@ -340,7 +342,7 @@ class TrainLoader():
             gt = getGT(self.dataset,vidName)
 
             #The scene number of each shot
-            gt = np.cumsum(gt)-1
+            gt = np.cumsum(gt)
 
             #Permutate the scenes
             gt = self.permuteScenes(gt)
@@ -349,6 +351,11 @@ class TrainLoader():
             zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
             np.random.shuffle(zipped)
             zipped = zipped[:l]
+
+            if len(zipped) < l:
+
+                repeatedShotInd = np.random.randint(len(zipped),size=l-len(zipped))
+                zipped = np.concatenate((zipped,zipped[repeatedShotInd]),axis=0)
 
             #If the shots are not sorted, each shot is very likely to be followed by a shot from a different scene
             #Sorting them balance this effect.
@@ -367,20 +374,22 @@ class TrainLoader():
             frameInds = frameInds.contiguous().view(-1)
 
             video = pims.Video(self.videoPaths[vidInd])
-            audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
 
             arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
             self.preprocAudio = transforms.Compose([arrToExamp])
 
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
-            audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
+
+            if self.audioLen > 0:
+                audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
+                audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
+                audio[i] = audioSeq
 
             data[i] = frameSeq
-            audio[i] = audioSeq
             targ[i] = torch.tensor(gt.astype(float).astype(int))
             vidNames.append(vidName)
 
-        return data,audio.float(),targ,vidNames
+        return data,audio,targ,vidNames
 
     def sampleAFrame(self,x):
         return x[np.random.randint(0,len(x))]
@@ -438,7 +447,6 @@ class TestLoader():
 
         videoPath = self.videoPaths[self.videoInd]
         video = pims.Video(videoPath)
-        audioData, fs = sf.read(os.path.splitext(videoPath)[0]+".wav")
 
         vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
@@ -446,7 +454,7 @@ class TestLoader():
         fps = float(tree.find("content").find("head").find("media").find("fps").text)
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
-        shotInds =  np.arange(self.shotInd,self.shotInd+L)
+        shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
 
         frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
 
@@ -458,17 +466,23 @@ class TestLoader():
         self.preprocAudio = transforms.Compose([arrToExamp])
 
         frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
-        audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
+
+        if self.audioLen > 0:
+            audioData, fs = sf.read(os.path.splitext(videoPath)[0]+".wav")
+            audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
+            audioSeq = audioSeq.unsqueeze(0).float()
+        else:
+            audioSeq = None
 
         gt = getGT(self.dataset,vidName)[self.shotInd:self.shotInd+L]
 
-        if self.shotInd + L >= len(shotBounds):
+        if shotInds[-1] + 1 == len(shotBounds):
             self.shotInd = 0
             self.videoInd += 1
+        else:
+            self.shotInd += L
 
-        self.shotInd += L
-
-        return frameSeq.unsqueeze(0),audioSeq.unsqueeze(0).float(),torch.tensor(gt).unsqueeze(0),[vidName]
+        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).unsqueeze(0),[vidName]
 
     def regularlySpacedFrames(self,shotBounds):
 
