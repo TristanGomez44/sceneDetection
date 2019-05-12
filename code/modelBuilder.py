@@ -22,6 +22,7 @@ from torch import nn
 import vggish
 import vggish_input
 
+
 from torch.nn import DataParallel
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
@@ -298,11 +299,57 @@ class simpleAttention(nn.Module):
         attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
         return attWeights
 
-class CNN_RNN(nn.Module):
+class LSTM_sceneDet(nn.Module):
 
-    def __init__(self,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,train_visual,framesPerShot,frameAttRepSize,multiGPU):
+    def __init__(self,nbFeat,hiddenSize,layersNb,dropout,bidirect):
 
-        super(CNN_RNN,self).__init__()
+        super(LSTM_sceneDet,self).__init__()
+
+        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
+        self.dense = nn.Linear(hiddenSize*(bidirect+1),1024)
+        self.final = nn.Linear(1024,1)
+        self.relu = nn.ReLU()
+
+    def forward(self,x,h,c):
+
+        if not h is None:
+            x,(h,c) = self.rnn(x,(h,c))
+        else:
+            x,(h,c) = self.rnn(x)
+        x = self.relu(x)
+        x = self.dense(x)
+        x = self.relu(x)
+        x = self.final(x)
+
+        x = torch.sigmoid(x)
+
+        return x,(h,c)
+
+class CNN_sceneDet(nn.Module):
+
+    def __init__(self,layFeatCut):
+
+        super(CNN_sceneDet,self).__init__()
+
+        self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
+        self.cnn.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
+    def forward(self,x):
+
+        x = self.cnn(x)
+
+        x = x.permute(0,2,1,3)
+
+        x = x.mean(dim=-1).mean(dim=-1)
+
+        x = torch.sigmoid(x)
+
+        return x
+
+class SceneDet(nn.Module):
+
+    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU):
+
+        super(SceneDet,self).__init__()
 
         self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat,layFeatCut)
 
@@ -317,7 +364,7 @@ class CNN_RNN(nn.Module):
             self.audioFeatModel = None
 
         self.framesPerShot = framesPerShot
-
+        self.temp_model = temp_model
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
         if featModelName=="resnet50" or featModelName=="resnet101":
@@ -330,14 +377,10 @@ class CNN_RNN(nn.Module):
 
         self.frameAtt = simpleAttention(nbFeat,frameAttRepSize)
 
-        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
-
-        self.dense = nn.Linear(hiddenSize*(bidirect+1),1024)
-
-        self.final = nn.Linear(1024,2)
-
-        self.relu = nn.ReLU()
-        self.train_visual = train_visual
+        if self.temp_model == "RNN":
+            self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layersNb,dropout,bidirect)
+        elif self.temp_model == "CNN":
+            self.tempModel = CNN_sceneDet(layFeatCut)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -368,7 +411,6 @@ class CNN_RNN(nn.Module):
 
         attWeights = self.frameAtt(x)
 
-
         #print("Forward",h is None)
         #print(x.size(),attWeights.size())
 
@@ -378,27 +420,12 @@ class CNN_RNN(nn.Module):
         #print(x.size())
         x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
 
-        if not h is None:
-            x,(h,c) = self.rnn(x,(h,c))
-        else:
-            x,(h,c) = self.rnn(x)
-
-        #print("After RNN : ",printAlloc())
-
-        x = self.relu(x)
-
-        x = self.dense(x)
-        x = self.relu(x)
-
-        x = self.final(x)
-
-        #print(x.size())
-
-        #print(x.size())
-        #x = x.permute(1,0,2)
-        #print(x.size())
-        #sys.exit(0)
-        return x,(h,c)
+        if self.temp_model == "RNN":
+            return self.tempModel(x,h,c)
+        elif self.temp_model == "CNN":
+            x = x.unsqueeze(1)
+            x = x.expand(x.size(0),x.size(1)*3,x.size(2),x.size(3))
+            return self.tempModel(x)
 
     def getParams(self):
 
@@ -418,8 +445,9 @@ def findNumbers(x):
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
 def netBuilder(args):
-    net = CNN_RNN(args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.train_visual,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu)
+
+    net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
+                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu)
 
     return net
 

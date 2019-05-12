@@ -108,23 +108,22 @@ class Bottleneck(nn.Module):
 
         return out
 
-
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False, norm_layer=None,layFeatCut=4):
+    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False, norm_layer=None,layFeatCut=4,maxPoolKer=(3,3),maxPoolPad=(1,1),stride=(2,2),featMap=False):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=stride, padding=3,
                                bias=False)
         self.bn1 = norm_layer(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=maxPoolKer, stride=stride, padding=maxPoolPad)
         self.layer1 = self._make_layer(block, 64, layers[0], norm_layer=norm_layer)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, norm_layer=norm_layer)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, norm_layer=norm_layer)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, norm_layer=norm_layer)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=stride, norm_layer=norm_layer)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=stride, norm_layer=norm_layer)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=stride, norm_layer=norm_layer)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         self.layFeatCut = layFeatCut
@@ -146,6 +145,10 @@ class ResNet(nn.Module):
                 elif isinstance(m, BasicBlock):
                     nn.init.constant_(m.bn2.weight, 0)
 
+        self.featMap = featMap
+
+        self.layers = [self.layer1,self.layer2,self.layer3,self.layer4]
+
     def _make_layer(self, block, planes, blocks, stride=1, norm_layer=None):
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -165,34 +168,24 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
 
-        x = self.layer1(x)
-        if self.layFeatCut == 1:
+        layerNb = 0
+        while layerNb < min(len(self.layers),self.layFeatCut):
+            x = self.layers[layerNb](x)
+            layerNb += 1
+
+        if not self.featMap:
             x = self.avgpool(x)
             x = x.view(x.size(0), -1)
-            return x
-
-        x = self.layer2(x)
-        if self.layFeatCut == 2:
-            x = self.avgpool(x)
-            x = x.view(x.size(0), -1)
-            return x
-
-        x = self.layer3(x)
-        if self.layFeatCut == 3:
-            x = self.avgpool(x)
-            x = x.view(x.size(0), -1)
-            return x
-
-        x = self.layer4(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
+        return x
 
         return x
+
 
 def resnet18(pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.

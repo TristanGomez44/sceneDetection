@@ -513,7 +513,7 @@ def getGT(dataset,vidName):
         gt = framesToShot(scenesBounds,shotBounds)
         np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
     else:
-        gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)).astype(int)
+        gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
 
     return gt.astype(int)
 
