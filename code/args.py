@@ -234,6 +234,10 @@ class ArgReader():
         self.parser.add_argument('--soft_loss_width', type=float,metavar='MODE',
                             help="The width of the triangular window of the soft loss (in number of shots).")
 
+        self.parser.add_argument('--temp_model', type=str,metavar='MODE',
+                            help="The architecture to use to model the temporal dependencies. Can be \'RNN\' or \'CNN\'.")
+
+
         self.args = None
 
     def getRemainingArgs(self):

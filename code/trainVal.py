@@ -19,7 +19,7 @@ import torch.backends.cudnn as cudnn
 
 import subprocess
 
-cudnn.enabled = False
+torch.backends.cudnn.benchmark = True
 
 def softLoss(predBatch,targetBatch,width):
 
@@ -29,7 +29,6 @@ def softLoss(predBatch,targetBatch,width):
     for i,target in enumerate(targetBatch):
 
         inds = torch.arange(len(target)).unsqueeze(1).to(device).float()
-        target[7] = 1
 
         sceneChangeInds = target.nonzero().view(-1).unsqueeze(0).float()
 
@@ -40,7 +39,7 @@ def softLoss(predBatch,targetBatch,width):
         softTarg = softTarg.mean(dim=1)
 
         #By doing this, the element in the original target equal to 1 stays equal to 1
-        softTargetBatch[i] = torch.max(softTarg,target)
+        softTargetBatch[i] = torch.max(softTarg,target.float())
 
     return softTargetBatch
 
@@ -174,10 +173,13 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
                 if not audio is None:
                     audio = audio.cuda()
 
-            output,_ = model(data,audio)
+            if args.temp_model == "CNN":
+                output = model(data,audio)
+            else:
+                output,_ = model(data,audio)
 
             #Metrics
-            pred = torch.argmax(output.data,dim=-1)
+            pred = output.data > 0.5
             cov,overflow = processResults.binaryToMetrics(pred,target)
 
             total_cover += cov
@@ -186,18 +188,23 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
             #Loss
             if args.soft_loss:
                 target = softLoss(output,target,args.soft_loss_width)
+                weights = None
+            else:
+                weights = getWeights(target,args.class_weight)
 
-            output_resh = output.view(output.size(0)*output.size(1),output.size(2))
-            target_resh = target.view(target.size(0)*target.size(1))
-            weights = getWeights(target,args.class_weight)
+            output_resh = output.view(-1)
+            target_resh = target.view(-1)
 
-            loss = F.cross_entropy(output_resh, target_resh.long(),weight=weights)
+            loss = F.binary_cross_entropy(output_resh, target_resh,weight=weights)
             loss.backward()
             optim.step()
             optim.zero_grad()
 
             total_loss += loss.detach().data.item()
             validBatch += 1
+
+            #if validBatch>3:
+            #    break
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
     writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
@@ -230,18 +237,21 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
                 audio = audio.cuda()
         #print(data.size())
 
-        if newVideo:
-            output,(h,c) = model(data,audio)
+        if args.temp_model == "CNN":
+            output = model(data,audio).data
         else:
-            output,(h,c) = model(data,audio,h,c)
+            if newVideo:
+                output,(h,c) = model(data,audio)
+            else:
+                output,(h,c) = model(data,audio,h,c)
 
-        output,h,c = output.data,h.data,c.data
+            output,h,c = output.data,h.data,c.data
+
 
         #Loss
         if args.soft_loss:
             target = softLoss(output,target,args.soft_loss_width)
 
-        weights = getWeights(target,args.class_weight)
 
         updateOutDict(outDict,output,vidNames)
 
@@ -250,22 +260,27 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
         #Metrics
         if newVideo and not videoBegining:
-            cov,overflow = processResults.binaryToMetrics(allPred,allTarget)
+            cov,overflow = processResults.binaryToMetrics(allOutput>0.5,allTarget)
             total_cover += cov
             total_overflow += overflow
 
-            loss = F.cross_entropy(allPred.view(-1,allPred.size(2)),allTarget.view(-1).long(),weight=weights).detach().data.item()
+            if args.soft_loss:
+                weights = None
+            else:
+                weights = getWeights(allTarget,args.class_weight)
+
+            loss = F.binary_cross_entropy(allOutput.view(-1),allTarget.view(-1).float(),weight=weights.float()).detach().data.item()
             total_loss += loss
 
             nbVideos += 1
 
         if newVideo:
-            allPred = torch.argmax(output,dim=-1)
             allTarget = target
+            allOutput = output
             videoBegining = False
         else:
-            allPred = torch.cat((allPred,torch.argmax(output,dim=-1)),dim=1)
             allTarget = torch.cat((allTarget,target),dim=1)
+            allOutput = torch.cat((allOutput,output),dim=1)
 
     if mode == "val":
         for key in outDict.keys():
@@ -280,26 +295,29 @@ def updateOutDict(outDict,output,vidNames):
 
     vidName = vidNames[0]
 
-    softm_output = F.softmax(output,dim=-1)
-
     if vidName in outDict.keys():
-        outDict[vidName] = torch.cat((softm_output[0,:,1],outDict[vidName]),dim=0)
+        outDict[vidName] = torch.cat((output[0,:],outDict[vidName]),dim=0)
 
     else:
-        outDict[vidName] = softm_output[0,:,1]
+        outDict[vidName] = output[0,:]
 
 def getWeights(target,classWeight):
 
-    oneNb = target.sum()
-    zeroNb = target.numel() - oneNb
+    oneNb = target.sum().float()
+    zeroNb = (target.numel() - oneNb).float()
 
-    unBalWeights = torch.Tensor([0.5,0.5])
-    balWeights = torch.Tensor([oneNb/target.numel(),zeroNb/target.numel()])
+    unBalWeight = torch.tensor([0.5,0.5])
+    balWeight = torch.tensor([oneNb/target.numel(),zeroNb/target.numel()])
 
-    weights = unBalWeights*(1-classWeight)+balWeights*classWeight
+    weight = unBalWeight*(1-classWeight)+balWeight*classWeight
+
+    weights = torch.zeros_like(target)
+
+    weights[target==1] = weight[1]
+    weights[target==0] = weight[0]
 
     if target.is_cuda:
-        weights = weights.cuda()
+        weight = weight.cuda()
 
     return weights
 
@@ -326,9 +344,8 @@ def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,wr
 
 def writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,model_id,exp_id,nbVideos=None):
 
-    total_loss /= validBatch
-
     sampleNb = validBatch if mode == "train" else nbVideos
+    total_loss /= sampleNb
     total_cover /= sampleNb
     total_overflow /= sampleNb
     f_score = 2*total_cover*(1-total_overflow)/(total_cover+1-total_overflow)
