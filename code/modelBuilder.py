@@ -301,7 +301,7 @@ class simpleAttention(nn.Module):
 
 class LSTM_sceneDet(nn.Module):
 
-    def __init__(self,nbFeat,hiddenSize,layersNb,dropout,bidirect):
+    def __init__(self,nbFeat,hiddenSize,layerNb,dropout,bidirect):
 
         super(LSTM_sceneDet,self).__init__()
 
@@ -327,12 +327,19 @@ class LSTM_sceneDet(nn.Module):
 
 class CNN_sceneDet(nn.Module):
 
-    def __init__(self,layFeatCut):
+    def __init__(self,layFeatCut,modelType):
 
         super(CNN_sceneDet,self).__init__()
 
-        self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
-        self.cnn.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
+        if modelType == "resnet50":
+            self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
+            self.cnn.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
+        elif modelType == "resnet101":
+            self.cnn = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
+            self.cnn.load_state_dict(torch.load("../models/resnet101_imageNet.pth"))
+        else:
+            raise ValueError("Unkown model type for CNN temporal model : ",modelType)
+
     def forward(self,x):
 
         x = self.cnn(x)
@@ -378,9 +385,11 @@ class SceneDet(nn.Module):
         self.frameAtt = simpleAttention(nbFeat,frameAttRepSize)
 
         if self.temp_model == "RNN":
-            self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layersNb,dropout,bidirect)
-        elif self.temp_model == "CNN":
-            self.tempModel = CNN_sceneDet(layFeatCut)
+            self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
+        elif self.temp_model.find("resnet") != -1:
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model)
+            if multiGPU:
+                self.tempModel = DataParallel(self.tempModel,dim=0)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -422,7 +431,7 @@ class SceneDet(nn.Module):
 
         if self.temp_model == "RNN":
             return self.tempModel(x,h,c)
-        elif self.temp_model == "CNN":
+        elif self.temp_model.find("resnet") != -1:
             x = x.unsqueeze(1)
             x = x.expand(x.size(0),x.size(1)*3,x.size(2),x.size(3))
             return self.tempModel(x)
