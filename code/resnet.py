@@ -176,7 +176,7 @@ class ResNet(nn.Module):
 
         layerNb = 0
         while layerNb < min(len(self.layers),self.layFeatCut):
-            x = self.layers[layerNb](x)
+            x = getattr(self,"layer"+str(layerNb+1))(x)
             layerNb += 1
 
         if not self.featMap:
