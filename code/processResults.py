@@ -9,6 +9,10 @@ import sys
 import xml.etree.ElementTree as ET
 from sklearn.manifold import TSNE
 import matplotlib.cm as cm
+import pims
+import cv2
+from PIL import Image
+
 def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
 
     repFile = glob.glob("../results/{}/")
@@ -349,6 +353,72 @@ def minus(a,b):
 
     return totalLen
 
+def scoreVis(dataset,resFilePath):
+
+    resFile = np.genfromtxt(resFilePath)
+
+    frameInds = resFile[:,:-1]
+    scores = resFile[:,-1]
+
+    videoName = os.path.splitext(resFilePath)[0].split("_")[2:]
+    videoName = "_".join(videoName)
+
+    videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
+
+    video = pims.Video(videoPath)
+
+    nbCols = int(np.sqrt(len(resFile[0])-1))+1
+    nbRows = nbCols
+
+    exp_id = os.path.dirname(resFilePath).split("/")[-1]
+    model_id = os.path.basename(os.path.splitext(resFilePath)[0].split("_")[0])
+
+    for i,score in enumerate(scores):
+
+        imgList = []
+
+        for frameInd in frameInds[i]:
+
+            frame = video[frameInd]
+            frame = frame.reshape(frame.shape[1],frame.shape[0],3)
+            imgList.append(frame)
+
+        nbImageAdded = 0
+        bigImage = None
+        for j in range(nbRows):
+
+            if nbImageAdded<len(imgList):
+                row = imgList[nbImageAdded]
+                nbImageAdded += 1
+
+                for k in range(nbCols):
+                    if nbImageAdded<len(imgList):
+                        row = np.concatenate((row,imgList[nbImageAdded]),axis=1)
+                        nbImageAdded += 1
+
+                if j==0:
+                    bigImage = row
+                else:
+                    bigImage = np.concatenate((bigImage,row),axis=0)
+
+
+        heigth = 60
+        width = heigth//2
+        offX = 10
+        offY = offX
+
+        cv2.rectangle(bigImage, (offX,offY), (offX+int(width*2),offY+heigth), (0,0,0),thickness=-1)
+        cv2.rectangle(bigImage, (offX,offY+int(heigth*score)), (offX+width,offY+heigth), (255,255,255),thickness=-1)
+        cv2.rectangle(bigImage, (offX,offY), (offX+width,offY+heigth), (255,0,0),thickness=2)
+
+        for j in range(6):
+            cv2.line(bigImage,(offX+width-5,offY+heigth*j//5),(offX+width+5,offY+heigth*j//5),(255,0,0),2)
+            cv2.putText(bigImage,str(10*round((5-j)*2)),(offX+width+10,offY+int(j*0.2*heigth)), cv2.FONT_HERSHEY_SIMPLEX, 0.4,(255,255,255),2,cv2.LINE_AA)
+
+
+        bigImage = Image.fromarray(bigImage)
+        bigImage.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName,frameInds[i,0]))
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -370,6 +440,8 @@ def main(argv=None):
     argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. The --exp_id, --model_id, --seed and --dataset_test arguments should\
                                     be set.')
 
+    argreader.parser.add_argument('--score_vis',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
+
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -381,8 +453,9 @@ def main(argv=None):
     if args.compt_gt_true_baseline:
         comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
-
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed)
+    if args.score_vis:
+        scoreVis(args.dataset_test,args.score_vis)
 
 if __name__ == "__main__":
     main()
