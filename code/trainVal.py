@@ -173,7 +173,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
                 if not audio is None:
                     audio = audio.cuda()
 
-            if args.temp_model == "CNN":
+            if args.temp_model.find("resnet") != -1:
                 output = model(data,audio)
             else:
                 output,_ = model(data,audio)
@@ -203,8 +203,8 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
             total_loss += loss.detach().data.item()
             validBatch += 1
 
-            #if validBatch>3:
-            #    break
+            if validBatch > 3 and args.debug:
+                break
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
     writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
@@ -218,12 +218,13 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
     total_loss,total_cover,total_overflow,nbVideos = 0,0,0,0
 
     outDict = {}
+    frameIndDict = {}
     currVidName = "None"
     videoBegining = True
     validBatch = 0
     nbVideos = 0
 
-    for batch_idx, (data, audio,target,vidNames) in enumerate(loader):
+    for batch_idx, (data, audio,target,vidNames,frameInds) in enumerate(loader):
 
         newVideo = (vidNames[0] != currVidName) or videoBegining
         currVidName = vidNames[0]
@@ -232,12 +233,12 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             print("\t",loader.sumL+1,"/",loader.nbShots)
 
         if args.cuda:
-            data, target = data.cuda(), target.cuda()
+            data, target,frameInds = data.cuda(), target.cuda(),frameInds.cuda()
             if not audio is None:
                 audio = audio.cuda()
         #print(data.size())
 
-        if args.temp_model == "CNN":
+        if args.temp_model.find("resnet") != -1:
             output = model(data,audio).data
         else:
             if newVideo:
@@ -247,16 +248,17 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
             output,h,c = output.data,h.data,c.data
 
-
         #Loss
         if args.soft_loss:
             target = softLoss(output,target,args.soft_loss_width)
 
-
-        updateOutDict(outDict,output,vidNames)
+        updateOutDict(outDict,output,frameIndDict,frameInds,vidNames)
 
         #loss.backward()
         #optim.zero_grad()
+
+        if batch_idx > 3 and args.debug:
+            break
 
         #Metrics
         if newVideo and not videoBegining:
@@ -267,9 +269,9 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             if args.soft_loss:
                 weights = None
             else:
-                weights = getWeights(allTarget,args.class_weight)
+                weights = getWeights(allTarget,args.class_weight).float()
 
-            loss = F.binary_cross_entropy(allOutput.view(-1),allTarget.view(-1).float(),weight=weights.float()).detach().data.item()
+            loss = F.binary_cross_entropy(allOutput.view(-1),allTarget.view(-1).float(),weight=weights).detach().data.item()
             total_loss += loss
 
             nbVideos += 1
@@ -284,22 +286,29 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
     if mode == "val":
         for key in outDict.keys():
-            np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),outDict[key].cpu().detach().numpy())
+            fullArr = torch.cat((frameIndDict[key].float(),outDict[key].unsqueeze(1)),dim=1)
+            np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),fullArr.cpu().detach().numpy())
+
     elif mode == "test":
         for key in outDict.keys():
-            np.savetxt("../results/{}/{}_{}.csv".format(args.exp_id,args.model_id,key),outDict[key].cpu().detach().numpy())
+            fullArr = torch.cat((frameIndDict[key],outDict[key].unsqueeze(1)),dim=0)
+            np.savetxt("../results/{}/{}_{}.csv".format(args.exp_id,args.model_id,key),fullArr.cpu().detach().numpy())
 
     writeSummaries(total_loss,total_cover,total_overflow,validBatch,writer,epoch,mode,args.model_id,args.exp_id,nbVideos=nbVideos)
 
-def updateOutDict(outDict,output,vidNames):
+def updateOutDict(outDict,output,frameIndDict,frameInds,vidNames):
 
     vidName = vidNames[0]
 
     if vidName in outDict.keys():
         outDict[vidName] = torch.cat((output[0,:],outDict[vidName]),dim=0)
 
+        reshFrInds = frameInds.view(len(output[0,:]),-1).clone()
+        frameIndDict[vidName] = torch.cat((frameIndDict[vidName],reshFrInds),dim=0)
+
     else:
         outDict[vidName] = output[0,:]
+        frameIndDict[vidName] = frameInds.view(len(output[0,:]),-1).clone()
 
 def getWeights(target,classWeight):
 

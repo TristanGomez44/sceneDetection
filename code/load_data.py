@@ -22,6 +22,7 @@ import processResults
 import pims
 import time
 import torchvision
+
 def getMiddleFrames(dataset,audioLen=1):
     #Get the middles frames of each shot for all video in a dataset
     #Require the shot to be pre-computed.
@@ -482,7 +483,7 @@ class TestLoader():
         else:
             self.shotInd += L
 
-        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).unsqueeze(0),[vidName]
+        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).unsqueeze(0),[vidName],torch.tensor(frameInds)
 
     def regularlySpacedFrames(self,shotBounds):
 
