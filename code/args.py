@@ -235,8 +235,9 @@ class ArgReader():
                             help="The width of the triangular window of the soft loss (in number of shots).")
 
         self.parser.add_argument('--temp_model', type=str,metavar='MODE',
-                            help="The architecture to use to model the temporal dependencies. Can be \'RNN\' or \'CNN\'.")
-
+                            help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
+        self.parser.add_argument('--debug', type=str2bool,metavar='BOOL',
+                            help="To run only a few batch of training and a few batch of validation")
 
         self.args = None
 
