@@ -150,7 +150,7 @@ def compDistMat(feat):
 
     simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
 
-def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode):
+def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode,width):
 
     model.train()
 
@@ -198,7 +198,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
 
             #Loss
             if args.soft_loss:
-                target = softLoss(output,target,args.soft_loss_width)
+                target = softLoss(output,target,width)
                 weights = None
             else:
                 weights = getWeights(target,args.class_weight)
@@ -222,7 +222,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
     torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
     writeSummaries(total_loss,total_cover,total_overflow,total_auc,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
 
-def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode):
+def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode,width):
 
     model.eval()
 
@@ -263,7 +263,7 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
         #Loss
         if args.soft_loss:
-            target = softLoss(output,target,args.soft_loss_width)
+            target = softLoss(output,target,width)
 
         updateOutDict(outDict,output,frameIndDict,frameInds,vidNames)
 
@@ -643,6 +643,7 @@ def main(argv=None):
             args.lr = [args.lr]
 
         lrCounter = 0
+        widthCounter = 0
         for epoch in range(startEpoch, args.epochs + 1):
 
             #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
@@ -659,8 +660,15 @@ def main(argv=None):
                 if lrCounter<len(args.lr)-1:
                     lrCounter += 1
 
-            trainFunc(net,optim,args.log_interval,trainLoader,epoch,args,writer,kwargs,"train")
-            valFunc(net,optim,args.log_interval,valLoader,epoch,args,writer,kwargs,"val")
+            if (epoch-1) % ((args.epochs + 1)//len(args.soft_loss_width)) == 0 or epoch==startEpoch:
+
+                width = args.soft_loss_width[widthCounter]
+                print("Soft loss width is : ",width)
+                if widthCounter<len(args.soft_loss_width)-1:
+                    widthCounter += 1
+
+            trainFunc(net,optim,args.log_interval,trainLoader,epoch,args,writer,kwargs,"train",width)
+            valFunc(net,optim,args.log_interval,valLoader,epoch,args,writer,kwargs,"val",width)
 
             #val(net,optim,valLoader,epoch,args,writer,5)
 

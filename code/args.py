@@ -231,8 +231,8 @@ class ArgReader():
 
         self.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
                             help="To use target soften with a triangular kernel.")
-        self.parser.add_argument('--soft_loss_width', type=float,metavar='MODE',
-                            help="The width of the triangular window of the soft loss (in number of shots).")
+        self.parser.add_argument('--soft_loss_width', type=str2FloatList,metavar='MODE',
+                            help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
 
         self.parser.add_argument('--temp_model', type=str,metavar='MODE',
                             help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
