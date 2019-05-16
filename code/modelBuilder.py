@@ -53,8 +53,6 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
             orig_resnet = resnetSeg.resnet50(pretrained=False)
             featModel = resnetSeg.ResnetSeg(orig_resnet)
 
-
-
             featModel.load_state_dict(torch.load("../models/resnet50_ADE20K.pth"))
 
         else:
@@ -321,7 +319,7 @@ class LSTM_sceneDet(nn.Module):
         x = self.relu(x)
         x = self.final(x)
 
-        x = torch.sigmoid(x)
+        x = torch.sigmoid(x).squeeze(dim=-1)
 
         return x,(h,c)
 
