@@ -13,6 +13,8 @@ import pims
 import cv2
 from PIL import Image
 
+import subprocess
+
 def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
 
     repFile = glob.glob("../results/{}/")
@@ -353,7 +355,127 @@ def minus(a,b):
 
     return totalLen
 
-def scoreVis(dataset,resFilePath):
+def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
+
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+
+    resFile = np.genfromtxt(resFilePath)
+    frameInds = resFile[:,:-1]
+    scores = resFile[:,-1]
+
+    splitResFileName = os.path.splitext(os.path.basename(resFilePath))[0].split("_")
+
+    videoName = splitResFileName[2:]
+    videoName = "_".join(videoName)
+
+    modelId = splitResFileName[0]
+
+    videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
+    print(videoPath)
+    shotFrames = xmlToArray("../data/{}/{}/result.xml".format(dataset,videoName))
+
+    cap = cv2.VideoCapture(videoPath)
+
+    shotCount = 0
+
+    widProp = 0.6
+    heigProp = 0.1
+    heigShifProp = 0.1
+
+    i=0
+    success=True
+    imgWidth,imgHeigth = None,None
+
+    fps = getVideoFPS(videoPath)
+
+    videoRes = None
+    while success:
+        success, imageRaw = cap.read()
+
+        if not videoRes:
+            print("../vis/{}/{}_{}_score.mp4".format(exp_id,modelId,videoName))
+            videoRes = cv2.VideoWriter("../vis/{}/{}_{}_score.mp4".format(exp_id,modelId,videoName), fourcc, fps, (imageRaw.shape[0],imageRaw.shape[1]))
+
+        if not imgWidth:
+            imgWidth = imageRaw.shape[0]
+            imgHeigth = imageRaw.shape[1]
+
+        if i > shotFrames[shotCount,1]:
+            shotCount += 1
+
+        scoresToPlot = scores[max(shotCount-nbScoToPlot//2,0):min(shotCount+nbScoToPlot//2+1,len(scores))]
+
+        if shotCount<nbScoToPlot//2:
+            shift = nbScoToPlot-(len(scoresToPlot)+1)
+        elif shotCount>len(scores)-nbScoToPlot//2:
+            shift = (len(scoresToPlot)+1)-nbScoToPlot
+        else:
+            shift = 0
+
+        #Background
+        startW = int(imgWidth*(1-widProp)//2)
+        endW = imgWidth-startW
+        cv2.rectangle(imageRaw, (startW,int(imgHeigth*(1-heigShifProp))-int(imgHeigth*heigProp)), (endW,int(imgHeigth*(1-heigShifProp))), (0,0,0),thickness=-1)
+
+        #Top and bottom lines
+        topLineHeig = int(imgHeigth*(1-heigShifProp) - imgHeigth*heigProp)
+        cv2.line(imageRaw,(startW,topLineHeig),(endW,topLineHeig),(255,0,0),2)
+
+        botLineHeig = int(imgHeigth*(1-heigShifProp))
+        cv2.line(imageRaw,(startW,botLineHeig),(endW,botLineHeig),(255,0,0),2)
+
+        #Focus lines
+        shiftFocus = int(imgWidth*widProp//nbScoToPlot)//2
+        cv2.line(imageRaw,(imgWidth//2-shiftFocus,topLineHeig),(imgWidth//2-shiftFocus,botLineHeig),(255,0,0),2)
+        cv2.line(imageRaw,(imgWidth//2+shiftFocus,topLineHeig),(imgWidth//2+shiftFocus,botLineHeig),(255,0,0),2)
+
+        #Dots
+        xList = []
+        yList = []
+        for j,score in enumerate(scoresToPlot):
+
+            posX = int(imgWidth//2 - imgWidth*widProp//2 + (imgWidth*widProp//nbScoToPlot)*((j+1)+shift))
+            posX += int(imgWidth*widProp/(2*nbScoToPlot))
+            posY = int(imgHeigth*(1-heigShifProp) - imgHeigth*heigProp*score)
+
+            xList.append(posX)
+            yList.append(posY)
+
+            cv2.circle(imageRaw,(posX,posY), 2, (255,255,255), -1)
+
+        #Lines between dots
+        for j in range(len(scoresToPlot)-1):
+
+            cv2.line(imageRaw,(xList[j],yList[j]),(xList[j+1],yList[j+1]),(255,255,255),1)
+
+
+        videoRes.write(imageRaw)
+
+        i+=1
+
+        if i > 1500:
+            break
+
+    videoRes.release()
+
+
+def getVideoFPS(videoPath):
+    subprocess.call("ffmpeg -i {} 2>info.txt".format(videoPath),shell=True)
+    with open('info.txt', 'r') as infoFile:
+        infos = infoFile.read()
+    fps = None
+    for line in infos.split("\n"):
+
+        if line.find("fps") != -1:
+            for info in line.split(","):
+                if info.find("fps") != -1:
+                    fps = round(float(info.replace(" ","").replace("fps","")))
+    if not fps:
+        raise ValueError("FPS info not found in info.txt")
+
+    return fps
+
+def scoreVis_frames(dataset,resFilePath):
 
     resFile = np.genfromtxt(resFilePath)
 
@@ -419,6 +541,8 @@ def scoreVis(dataset,resFilePath):
         bigImage = Image.fromarray(bigImage)
         bigImage.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName,frameInds[i,0]))
 
+
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -440,7 +564,8 @@ def main(argv=None):
     argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. The --exp_id, --model_id, --seed and --dataset_test arguments should\
                                     be set.')
 
-    argreader.parser.add_argument('--score_vis',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
+    argreader.parser.add_argument('--score_vis_frames',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
+    argreader.parser.add_argument('--score_vis_video',type=str,help='To plot the scene change score on the video itself. Requires the --dataset_test and --exp_id arguments to be set. The value is a path to a result file.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -454,8 +579,10 @@ def main(argv=None):
         comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed)
-    if args.score_vis:
-        scoreVis(args.dataset_test,args.score_vis)
+    if args.score_vis_frames:
+        scoreVis_frames(args.dataset_test,args.score_vis_frames)
+    if args.score_vis_video:
+        scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
 
 if __name__ == "__main__":
     main()
