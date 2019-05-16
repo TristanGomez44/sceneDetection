@@ -87,7 +87,7 @@ def compGT(exp_id,metric,thres):
 
 def comptGT_trueBaseline(truebaseFold,exp_id,dataset,resPath,frame):
 
-    resCSV = "video,coverage,overflow,F-score\n"
+    resCSV = "video,coverage,overflow,F-score,IoU\n"
 
     for trueBaseCutsPath in sorted(glob.glob(truebaseFold+"/*.csv")) :
 
@@ -111,11 +111,12 @@ def comptGT_trueBaseline(truebaseFold,exp_id,dataset,resPath,frame):
 
         cov = coverage(gt,truebasecuts)
         over = overflow(gt,truebasecuts)
-
         f_score = 2*cov*(1-over)/(cov+(1-over))
 
-        resCSV +=vidName+","+str(cov)+","+str(over)+","+str(f_score)+"\n"
-        print(vidName+","+str(cov)+","+str(over)+","+str(f_score))
+        iou = IoU(gt,truebasecuts)
+
+        resCSV +=vidName+","+str(cov)+","+str(over)+","+str(f_score)+","+str(iou)+"\n"
+        print(vidName+","+str(cov)+","+str(over)+","+str(f_score)+","+str(iou))
 
     with open(resPath,"w") as text_file:
         print(resCSV,file=text_file)
@@ -137,20 +138,18 @@ def binaryToMetrics(pred,target):
             predBounds.append(pred_bounds)
             targBounds.append(targ_bounds)
 
-    cov_val,overflow_val = 0,0
+    cov_val,overflow_val,iou_val = 0,0,0
     for pred,targ in zip(predBounds,targBounds):
 
-        cov_sam = coverage(np.array(targ),np.array(pred))
-        overf_sam = overflow(np.array(targ),np.array(pred))
-
-        cov_val += cov_sam
-        overflow_val += overf_sam
-
+        cov_val += coverage(np.array(targ),np.array(pred))
+        overflow_val += overflow(np.array(targ),np.array(pred))
+        iou_val += IoU(np.array(targ),np.array(pred))
 
     cov_val /= len(targBounds)
     overflow_val /= len(targBounds)
+    iou_val /= len(targBounds)
 
-    return cov_val,overflow_val
+    return cov_val,overflow_val,iou_val
 
 def binaryToSceneBounds(scenesBinary):
 
@@ -452,9 +451,6 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
         videoRes.write(imageRaw)
 
         i+=1
-
-        if i > 1500:
-            break
 
     videoRes.release()
 
