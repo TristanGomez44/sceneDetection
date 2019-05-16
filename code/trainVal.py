@@ -160,6 +160,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
     total_cover = 0
     total_overflow = 0
     total_auc = 0
+    total_iou = 0
     validBatch = 0
 
     allOut = None
@@ -184,10 +185,11 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
 
             #Metrics
             pred = output.data > 0.5
-            cov,overflow = processResults.binaryToMetrics(pred,target)
+            cov,overflow,iou = processResults.binaryToMetrics(pred,target)
 
             total_cover += cov
             total_overflow += overflow
+            total_iou += iou
 
             if allOut is None:
                 allOut = output.data
@@ -220,7 +222,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
     total_auc = roc_auc_score(allGT.view(-1).cpu().numpy(),allOut.view(-1).cpu().numpy())
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
-    writeSummaries(total_loss,total_cover,total_overflow,total_auc,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
+    writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
 
 def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode,width):
 
@@ -228,7 +230,7 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
     print("Epoch",epoch," : ",mode)
 
-    total_loss,total_cover,total_overflow,total_auc,nbVideos = 0,0,0,0,0
+    total_loss,total_cover,total_overflow,total_auc,total_iou,nbVideos = 0,0,0,0,0,0
 
     outDict = {}
     frameIndDict = {}
@@ -275,9 +277,10 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
         #Metrics
         if newVideo and not videoBegining:
-            cov,overflow = processResults.binaryToMetrics(allOutput>0.5,allTarget)
+            cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
             total_cover += cov
             total_overflow += overflow
+            total_iou += iou
 
             if args.soft_loss:
                 weights = None
@@ -309,7 +312,7 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             fullArr = torch.cat((frameIndDict[key],outDict[key].unsqueeze(1)),dim=0)
             np.savetxt("../results/{}/{}_{}.csv".format(args.exp_id,args.model_id,key),fullArr.cpu().detach().numpy())
 
-    writeSummaries(total_loss,total_cover,total_overflow,total_auc,validBatch,writer,epoch,mode,args.model_id,args.exp_id,nbVideos=nbVideos)
+    writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,args.model_id,args.exp_id,nbVideos=nbVideos)
 
 def updateOutDict(outDict,output,frameIndDict,frameInds,vidNames):
 
@@ -366,10 +369,11 @@ def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,wr
         print(header,file=text_file)
         print("{},{},{},{},{}".format(epoch,total_loss,accuracy,total_posDist,total_negDist),file=text_file)
 
-def writeSummaries(total_loss,total_cover,total_overflow,total_auc,validBatch,writer,epoch,mode,model_id,exp_id,nbVideos=None):
+def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,model_id,exp_id,nbVideos=None):
 
     sampleNb = validBatch if mode == "train" else nbVideos
     total_loss /= sampleNb
+    total_iou /= sampleNb
     total_cover /= sampleNb
     total_overflow /= sampleNb
     f_score = 2*total_cover*(1-total_overflow)/(total_cover+1-total_overflow)
@@ -382,15 +386,16 @@ def writeSummaries(total_loss,total_cover,total_overflow,total_auc,validBatch,wr
     writer.add_scalars('Overflows',{model_id+"_"+mode:total_overflow},epoch)
     writer.add_scalars('F-scores',{model_id+"_"+mode:f_score},epoch)
     writer.add_scalars('AuC',{model_id+"_"+mode:total_auc},epoch)
+    writer.add_scalars('IoU',{model_id+"_"+mode:total_iou},epoch)
 
     if not os.path.exists("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode)):
-        header = "epoch,loss,coverage,overflow,f-score,auc"
+        header = "epoch,loss,coverage,overflow,f-score,auc,iou"
     else:
         header = ""
 
     with open("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode),"a") as text_file:
         print(header,file=text_file)
-        print("{},{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score,total_auc),file=text_file)
+        print("{},{},{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score,total_auc,total_iou),file=text_file)
 
 def get_OptimConstructor_And_Kwargs(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
@@ -641,6 +646,9 @@ def main(argv=None):
         #Converting it to a list with one element makes the rest of processing easier
         if type(args.lr) is float:
             args.lr = [args.lr]
+
+        if type(args.soft_loss_width) is float:
+            args.soft_loss_width = [args.soft_loss_width]
 
         lrCounter = 0
         widthCounter = 0
