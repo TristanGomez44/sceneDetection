@@ -205,10 +205,8 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
             else:
                 weights = getWeights(target,args.class_weight)
 
-            output_resh = output.view(-1)
-            target_resh = target.view(-1)
+            loss = F.binary_cross_entropy(output, target,weight=weights)
 
-            loss = F.binary_cross_entropy(output_resh, target_resh,weight=weights)
             loss.backward()
             optim.step()
             optim.zero_grad()
@@ -285,9 +283,9 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             if args.soft_loss:
                 weights = None
             else:
-                weights = getWeights(allTarget,args.class_weight).float()
+                weights = getWeights(allTarget,args.class_weight)
 
-            loss = F.binary_cross_entropy(allOutput.view(-1),allTarget.view(-1).float(),weight=weights).detach().data.item()
+            loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
 
             total_loss += loss
             total_auc += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())

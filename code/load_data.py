@@ -483,7 +483,7 @@ class TestLoader():
         else:
             self.shotInd += L
 
-        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).unsqueeze(0),[vidName],torch.tensor(frameInds)
+        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),[vidName],torch.tensor(frameInds)
 
     def regularlySpacedFrames(self,shotBounds):
 
