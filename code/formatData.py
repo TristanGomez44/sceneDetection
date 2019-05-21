@@ -105,33 +105,28 @@ def main(argv=None):
             filePath = args.base_fold+"/"+vidName+"_baseline.csv"
             np.savetxt(baseFilePath,scenesS)
 
-    if args.format_youtube:
+    if args.format_youtube and args.dataset == "youtube":
 
         #Removing non-scene video (montages, trailer etc.)
         videoPaths = sorted(glob.glob("../data/{}/*.*".format(args.dataset)))
-        print(videoPaths)
-        videoToRm = list(filter(lambda x:os.path.basename(x).find("Trailer") != -1 \
-                                      or os.path.basename(x).find("MASHUP") != -1\
-                                      or os.path.basename(x).find("Tribute") != -1,videoPaths))
+
+        videoToRm = list(filter(lambda x: os.path.basename(x).find("Movie_Clip") == -1 \
+                                      and os.path.basename(x).find("Movie Clip") == -1,videoPaths))
 
         for videoPath in videoToRm:
-            os.remove(videoPath)
+            try:
+                os.remove(videoPath)
+            except IsADirectoryError:
+                pass
 
-        #Removing bad characters
-        videoPaths = sorted(glob.glob("../data/{}/*.*".format(args.dataset)))
-        for videoPath in videoPaths:
-            if videoPath.find(" ") != -1 or videoPath.find("(") != -1 or videoPath.find(")") != -1:
-                os.rename(videoPath,videoPath.replace(" ","_").replace("(","").replace(")","").replace("'",""))
+        removeBadChar(args.dataset)
 
         #Grouping clip by movie
         for videoPath in videoPaths:
             print(videoPath)
 
-            if args.dataset != "youtube_large":
-                movieName = os.path.splitext(os.path.basename(videoPath).split("___")[-1].split("_Movie_Clip")[0])[0]
-                movieName = movieName.split("_(")[0]
-            else:
-                movieName = os.path.splitext(os.path.basename(videoPath))[0].split("_-_")[0]
+            movieName = os.path.splitext(os.path.basename(videoPath))[0].split("_-_")[0]
+            movieName = ''.join([i for i in movieName if not i.isdigit()])
 
             folder = "../data/{}/{}".format(args.dataset,movieName)
 
@@ -141,6 +136,89 @@ def main(argv=None):
             targetPath = folder+"/"+os.path.basename(videoPath)
 
             os.rename(videoPath,targetPath)
+
+    if args.format_youtube and args.dataset == "youtube_large":
+
+        #Removing non-scene video (montages, trailer etc.)
+        videoPaths = sorted(glob.glob("../data/youtube_large/*.*"))
+
+        videoToRm = list(filter(lambda x: os.path.basename(x).find("Movie_CLIP") == -1 \
+                                      and os.path.basename(x).find("Movie CLIP") == -1 \
+                                      and os.path.basename(x).find("Movieclips") == -1,videoPaths))
+
+        for videoPath in videoToRm:
+            try:
+                os.remove(videoPath)
+            except IsADirectoryError:
+                pass
+
+        removeBadChar("youtube_large")
+
+        videoPaths = sorted(glob.glob("../data/youtube_large/*.mp4"))
+
+        movieDict = {}
+        descrNotFound = []
+        for video in videoPaths:
+
+            if os.path.exists(os.path.splitext(video)[0]+".description") and os.path.basename(video).lower().find("mashup") == -1:
+                with open(os.path.splitext(video)[0]+".description","r") as text_file:
+                    descr = text_file.read()
+
+                descr = descr.split("\n")[0]
+
+                #descr = descr.replace("  "," ")
+
+                if descr.find("movie clips:") != -1:
+                    movieName = descr[:descr.find("movie clips:")-1]
+                elif descr.find(" Movie Clip :") != -1:
+                    movieName = descr[:descr.find(" Movie Clip :")-1]
+                elif descr.find(" - ") != -1:
+                    movieName = descr[:descr.find(" - ")]
+                elif descr.find(":") != -1:
+                    movieName = descr[:descr.find(":")]
+                else:
+                    movieName = descr[:descr.find("-")-1]
+
+                if not movieName in movieDict.keys():
+                    movieDict[movieName] = [video]
+                else:
+                    movieDict[movieName].append(video)
+            else:
+                descrNotFound.append(os.path.splitext(video)[0]+".description")
+
+        #Removing scene without description
+        if not os.path.exists("../data/nodescr_youtube_large"):
+            os.makedirs("../data/nodescr_youtube_large")
+        for descrPath in descrNotFound:
+            videoPath = descrPath.replace(".description",".mp4")
+            os.rename(videoPath,"../data/nodescr_youtube_large/"+os.path.basename(videoPath))
+
+        #The folder in which the scenes with badly formated description will be put
+        if not os.path.exists("../data/baddescr_youtube_large"):
+            os.makedirs("../data/baddescr_youtube_large")
+
+        #Grouping the scenes by movie
+        for i,movieName in enumerate(movieDict.keys()):
+
+            #Removing scene with a badly formated description
+            if len(movieDict[movieName]) == 1:
+                for scene in movieDict[movieName]:
+                    os.rename(scene,"../data/baddescr_youtube_large/"+os.path.basename(scene))
+            else:
+                if not os.path.exists("../data/youtube_large/{}".format(movieName)):
+                    os.makedirs("../data/{}".format(movieName))
+                for scene in movieDict[movieName]:
+                    os.rename(scene,"../data/youtube_large/{}/{}".format(movieName,os.path.basename(scene)))
+
+        #Puting the descriptions in a folder
+        if not os.path.exists("../data/descr_youtube_large"):
+            os.makedirs("../data/descr_youtube_large")
+        for descr in sorted(glob.glob("../data/youtube_large/*.description")):
+            os.rename(descr,"../data/descr_youtube_large/{}".format(os.path.basename(descr)))
+
+        #Removing bad characters in movie name:
+        for movieFold in sorted(glob.glob("../data/youtube_large/*/")):
+            os.rename(movieFold,removeBadChar_filename(movieFold))
 
     if args.merge_videos:
 
@@ -225,7 +303,6 @@ def main(argv=None):
                                 success = False
 
                 sf.write(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData,fs)
-                sys.exit(0)
 
                 lastFram = len(gt)
                 gt = np.array(gt).nonzero()[0]
@@ -257,6 +334,37 @@ def main(argv=None):
                 shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
                         #subprocess.run("shotdetect -i "+accVidPath.replace("_tmp","")+" -o "+videoFoldPath+" -f -l -m",shell=True)
+
+def common_str(string1, string2):
+    answer = ""
+    len1, len2 = len(string1), len(string2)
+    for i in range(len1):
+        match = ""
+        for j in range(len2):
+            if (i + j < len1 and string1[i + j] == string2[j]):
+                match += string2[j]
+            else:
+                if (len(match) > len(answer)): answer = match
+                match = ""
+    return answer
+
+def removeBadChar_filename(filename):
+    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","")
+
+def removeBadChar(dataset):
+
+    #Removing bad characters
+    videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
+    for videoPath in videoPaths:
+        if videoPath.find(" ") != -1 or videoPath.find("(") != -1 or videoPath.find(")") != -1 or videoPath.find("$") != -1:
+
+            targetPath = removeBadChar_filename(videoPath)
+
+            if os.path.exists(targetPath):
+                os.remove(videoPath)
+            else:
+                os.rename(videoPath,targetPath)
+
 
 def extractAudio(videoPath,videoFoldPath):
     #Extracting audio
