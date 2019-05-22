@@ -193,7 +193,7 @@ def main(argv=None):
             videoPath = descrPath.replace(".description",".mp4")
             os.rename(videoPath,"../data/nodescr_youtube_large/"+os.path.basename(videoPath))
 
-        #The folder in which the scenes with badly formated description will be put
+        #The folder in which the scenes with badly formated description will be put,
         if not os.path.exists("../data/baddescr_youtube_large"):
             os.makedirs("../data/baddescr_youtube_large")
 
@@ -222,7 +222,7 @@ def main(argv=None):
 
     if args.merge_videos:
 
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         if not os.path.exists("../data/{}/annotations".format(args.dataset)):
             os.makedirs("../data/{}/annotations".format(args.dataset))
 
@@ -239,28 +239,18 @@ def main(argv=None):
                 gt = []
                 accAudioData = None
 
-                for videoPath in sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos))):
+                for k,videoPath in enumerate(sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos)))):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
-                    print("Extracting audio")
                     audioData = extractAudio(videoPath,videoFoldPath)
-                    print("Accumulating audio")
                     accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
 
-                    print("Getting number of frames")
                     #Getting the number of frames of the video
                     subprocess.call("ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(videoPath),shell=True)
                     nbFrames = np.genfromtxt("nbFrames.txt")
-                    print("{} has {} frames".format(os.path.basename(videoPath),nbFrames))
 
-                    subprocess.call("ffmpeg -i {} 2>info.txt".format(videoPath),shell=True)
-                    with open('info.txt', 'r') as infoFile:
-                        infos = infoFile.read()
-
-                    fps = round(float(infos.split("\n")[18].split(",")[5].replace(" ","").replace("fps","")))
-
-                    print("{} has {} frame per second".format(os.path.basename(videoPath),fps))
+                    fps = processResults.getVideoFPS(videoPath)
 
                     if args.dataset == "youtube_large":
                         if videoPath.find("Movie_CLIP") != -1:
@@ -278,20 +268,10 @@ def main(argv=None):
                         success, imageRaw = cap.read()
 
                         if success:
-                            if not accumulatedVideo:
-                                if (not args.img_width) or (not args.img_heigth):
-                                    accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (imageRaw.shape[0],imageRaw.shape[1]))
-                                else:
-                                    accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, 30, (args.img_width,args.img_heigth))
-
-                            #Removing the black areas in the video and the "movie clip" symbol in the bottom
-                            if args.dataset == "youtube_large":
-                                imageRaw = imageRaw[50:-50]
-
-                            imageRaw = (resize(imageRaw,(args.img_width,args.img_heigth,3),anti_aliasing=True,mode='constant')*255).astype("uint8")
+                            if accumulatedVideo is None:
+                                accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, fps, (imageRaw.shape[1],imageRaw.shape[0]))
 
                             accumulatedVideo.write(imageRaw)
-
                             if i==0:
                                 gt.append(1)
                             else:
@@ -318,11 +298,17 @@ def main(argv=None):
                 np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName),gt)
                 accumulatedVideo.release()
 
-                os.rename(accVidPath,accVidPath.replace("_tmp",""))
+                #Changing the video resolution
+                if args.dataset == "youtube_large":
+                    #For youtube_large, also removing the black areas in the video and the "movie clip" symbol in the bottom
+                    subprocess.run("ffmpeg -loglevel panic -i {} -filter:v \"crop=in_w:in_h-2*50,scale={}:{}\" {}".format(accVidPath,args.img_width,args.img_heigth,accVidPath.replace("_tmp","")),shell=True)
+                else:
+                    subprocess.run("ffmpeg -loglevel panic -i {} -filter:v \"scale={}:{}\" {}".format(accVidPath,args.img_width,args.img_heigth,accVidPath.replace("_tmp","")),shell=True)
+
+                os.remove(accVidPath)
                 os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
 
-                #Detecting shots
-                #if not os.path.exists(videoFoldPath+"/result.xml"):
+            #Detecting shots
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
                 shotBoundsTime = shotdetect.extract_shots_with_ffprobe(accVidPath.replace("_tmp",""))
@@ -333,7 +319,6 @@ def main(argv=None):
                 ends =  np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
                 shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
-                        #subprocess.run("shotdetect -i "+accVidPath.replace("_tmp","")+" -o "+videoFoldPath+" -f -l -m",shell=True)
 
 def common_str(string1, string2):
     answer = ""
@@ -349,7 +334,7 @@ def common_str(string1, string2):
     return answer
 
 def removeBadChar_filename(filename):
-    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","")
+    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","").replace(",","_")
 
 def removeBadChar(dataset):
 
@@ -364,7 +349,6 @@ def removeBadChar(dataset):
                 os.remove(videoPath)
             else:
                 os.rename(videoPath,targetPath)
-
 
 def extractAudio(videoPath,videoFoldPath):
     #Extracting audio
