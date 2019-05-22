@@ -452,8 +452,10 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
         i+=1
 
-    videoRes.release()
+        if shotCount == len(shotFrames):
+            success = False
 
+    videoRes.release()
 
 def getVideoFPS(videoPath):
     subprocess.call("ffmpeg -i {} 2>info.txt".format(videoPath),shell=True)
