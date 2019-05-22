@@ -21,7 +21,7 @@ import subprocess
 from sklearn.metrics import roc_auc_score
 torch.backends.cudnn.benchmark = True
 
-def softLoss(predBatch,targetBatch,width):
+def softTarget(predBatch,targetBatch,width):
 
     device = predBatch.device
     softTargetBatch = torch.zeros_like(targetBatch)
@@ -200,7 +200,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
 
             #Loss
             if args.soft_loss:
-                target = softLoss(output,target,width)
+                target = softTarget(output,target,width)
                 weights = None
             else:
                 weights = getWeights(target,args.class_weight)
@@ -261,10 +261,6 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
             output,h,c = output.data,h.data,c.data
 
-        #Loss
-        if args.soft_loss:
-            target = softLoss(output,target,width)
-
         updateOutDict(outDict,output,frameIndDict,frameInds,vidNames)
 
         #loss.backward()
@@ -285,10 +281,14 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             else:
                 weights = getWeights(allTarget,args.class_weight)
 
-            loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
-
-            total_loss += loss
             total_auc += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
+
+            #Loss
+            if args.soft_loss:
+                allTarget = softTarget(allOutput,allTarget,width)
+
+            loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
+            total_loss += loss
 
             nbVideos += 1
 
