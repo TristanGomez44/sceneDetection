@@ -218,6 +218,9 @@ def main(argv=None):
 
         #Removing bad characters in movie name:
         for movieFold in sorted(glob.glob("../data/youtube_large/*/")):
+            for video in sorted(glob.glob("{}/*".format(movieFold))):
+                os.rename(video,removeBadChar_filename(video))
+
             os.rename(movieFold,removeBadChar_filename(movieFold))
 
     if args.merge_videos:
@@ -334,21 +337,22 @@ def common_str(string1, string2):
     return answer
 
 def removeBadChar_filename(filename):
-    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","").replace(",","_")
+    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","").replace(",","_").replace("&","")
+
+def removeBadChar_list(videoPaths):
+    for videoPath in videoPaths:
+        targetPath = removeBadChar_filename(videoPath)
+
+        if os.path.exists(targetPath) and (not os.path.isdir(videoPath)):
+            os.remove(videoPath)
+        else:
+            os.rename(videoPath,targetPath)
 
 def removeBadChar(dataset):
 
     #Removing bad characters
     videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
-    for videoPath in videoPaths:
-        if videoPath.find(" ") != -1 or videoPath.find("(") != -1 or videoPath.find(")") != -1 or videoPath.find("$") != -1:
-
-            targetPath = removeBadChar_filename(videoPath)
-
-            if os.path.exists(targetPath):
-                os.remove(videoPath)
-            else:
-                os.rename(videoPath,targetPath)
+    removeBadChar_list(videoPaths)
 
 def extractAudio(videoPath,videoFoldPath):
     #Extracting audio
