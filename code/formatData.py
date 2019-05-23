@@ -218,10 +218,10 @@ def main(argv=None):
 
         #Removing bad characters in movie name:
         for movieFold in sorted(glob.glob("../data/youtube_large/*/")):
-            for video in sorted(glob.glob("{}/*".format(movieFold))):
-                os.rename(video,removeBadChar_filename(video))
-
             os.rename(movieFold,removeBadChar_filename(movieFold))
+
+        for video in sorted(glob.glob("../data/youtube_large/*/*")):
+            os.rename(video,removeBadChar_filename(video))
 
     if args.merge_videos:
 
@@ -234,6 +234,7 @@ def main(argv=None):
 
         for videoFoldPath in videoFoldPaths:
             print(videoFoldPath)
+
             accVidPath = videoFoldPath[:-1]+"_tmp.{}".format(args.merge_videos)
 
             if not os.path.exists(accVidPath.replace("_tmp","")):
@@ -246,7 +247,7 @@ def main(argv=None):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
-                    audioData = extractAudio(videoPath,videoFoldPath)
+                    extractAudio(videoPath,videoFoldPath)
                     accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
 
                     #Getting the number of frames of the video
@@ -256,12 +257,7 @@ def main(argv=None):
                     fps = processResults.getVideoFPS(videoPath)
 
                     if args.dataset == "youtube_large":
-                        if videoPath.find("Movie_CLIP") != -1:
-                            stopFrame = nbFrames-32*fps
-                        elif videoPath.find("Movieclips") != -1:
-                            stopFrame = nbFrames-12*fps
-                        else:
-                            raise ValueError("Unkown title format for video",videoPath)
+                        stopFrame = nbFrames-32*fps
                     else:
                         stopFrame = nbFrames
 
@@ -285,7 +281,8 @@ def main(argv=None):
                             if i>=stopFrame:
                                 success = False
 
-                sf.write(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData,fs)
+                wavFilePath = accVidPath.replace(".{}".format(args.merge_videos),".wav")
+                sf.write(wavFilePath,accAudioData,fs)
 
                 lastFram = len(gt)
                 gt = np.array(gt).nonzero()[0]
@@ -323,6 +320,13 @@ def main(argv=None):
                 shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
+            #Remove the temporary wav files:
+            for wavFilePath in sorted(glob.glob(videoFoldPath+"/*.wav")):
+                os.remove(wavFilePath)
+
+            #Convert the accumulated wav file into an mp3 file:
+            subprocess.run("ffmpeg -loglevel panic -i {} -acodec libmp3lame {}".format(wavFilePath,wavFilePath.replace(".wav",".mp3")),shell=True)
+
 def common_str(string1, string2):
     answer = ""
     len1, len2 = len(string1), len(string2)
@@ -337,7 +341,7 @@ def common_str(string1, string2):
     return answer
 
 def removeBadChar_filename(filename):
-    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","").replace(",","_").replace("&","")
+    return filename.replace(" ","_").replace("(","").replace(")","").replace("'","").replace("$","").replace(",","_").replace("&","").replace(":","")
 
 def removeBadChar_list(videoPaths):
     for videoPath in videoPaths:
