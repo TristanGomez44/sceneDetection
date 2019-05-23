@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
+import numpy as np
 
 '''
 
@@ -36,7 +37,7 @@ def conv1x1(in_planes, out_planes, stride=1):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None,feat=False):
         super(BasicBlock, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -48,6 +49,8 @@ class BasicBlock(nn.Module):
         self.bn2 = norm_layer(planes)
         self.downsample = downsample
         self.stride = stride
+
+        self.feat = feat
 
     def forward(self, x):
         identity = x
@@ -63,15 +66,16 @@ class BasicBlock(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+
+        if not self.feat:
+            out = self.relu(out)
 
         return out
-
 
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None,feat=False):
         super(Bottleneck, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -85,6 +89,8 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+
+        self.feat = feat
 
     def forward(self, x):
         identity = x
@@ -104,7 +110,9 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+
+        if not self.feat:
+            out = self.relu(out)
 
         return out
 
@@ -120,10 +128,10 @@ class ResNet(nn.Module):
         self.bn1 = norm_layer(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=maxPoolKer, stride=stride, padding=maxPoolPad)
-        self.layer1 = self._make_layer(block, 64, layers[0], norm_layer=norm_layer)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=stride, norm_layer=norm_layer)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=stride, norm_layer=norm_layer)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=stride, norm_layer=norm_layer)
+        self.layer1 = self._make_layer(block, 64, layers[0], norm_layer=norm_layer,feat=(layFeatCut==1))
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==2))
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==3))
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==4))
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         self.layFeatCut = layFeatCut
@@ -149,7 +157,7 @@ class ResNet(nn.Module):
 
         self.layers = [self.layer1,self.layer2,self.layer3,self.layer4]
 
-    def _make_layer(self, block, planes, blocks, stride=1, norm_layer=None):
+    def _make_layer(self, block, planes, blocks, stride=1, norm_layer=None,feat=False):
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         downsample = None
@@ -162,8 +170,13 @@ class ResNet(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, norm_layer))
         self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=norm_layer))
+
+        for i in range(1, blocks):
+
+            if i == blocks-1 and feat:
+                layers.append(block(self.inplanes, planes, norm_layer=norm_layer,feat=True))
+            else:
+                layers.append(block(self.inplanes, planes, norm_layer=norm_layer,feat=False))
 
         return nn.Sequential(*layers)
 
@@ -175,6 +188,8 @@ class ResNet(nn.Module):
         x = self.maxpool(x)
 
         layerNb = 0
+
+
         while layerNb < min(len(self.layers),self.layFeatCut):
             x = getattr(self,"layer"+str(layerNb+1))(x)
             layerNb += 1
@@ -182,10 +197,8 @@ class ResNet(nn.Module):
         if not self.featMap:
             x = self.avgpool(x)
             x = x.view(x.size(0), -1)
-        return x
 
         return x
-
 
 def resnet18(pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.
