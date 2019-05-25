@@ -22,7 +22,6 @@ from torch import nn
 import vggish
 import vggish_input
 
-
 from torch.nn import DataParallel
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
@@ -325,7 +324,7 @@ class LSTM_sceneDet(nn.Module):
 
 class CNN_sceneDet(nn.Module):
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean"):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -343,17 +342,30 @@ class CNN_sceneDet(nn.Module):
                 raise ValueError("To load the pretrained weights, the CNN temp model should have 64 channels and not {}".format(chan))
             self.cnn.load_state_dict(torch.load("../models/{}_imageNet.pth".format(modelType)))
 
-        '''
-        if poolOp == "mean":
-            self.poolOp = lambda x: x.mean(dim=-1).mean(dim=-1)
+        self.pool = pool
 
-        '''
+        if self.pool == 'linear':
+            self.endLin = nn.Linear(chan*8*64,1)
 
     def forward(self,x):
 
         x = self.cnn(x)
         x = x.permute(0,2,1,3)
-        x = x.mean(dim=-1).mean(dim=-1)
+
+        if self.pool == "mean":
+            x= x.mean(dim=-1).mean(dim=-1)
+        elif self.pool == "linear":
+
+            origSize = x.size()
+
+            x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3))
+            x = x.contiguous().view(x.size(0),x.size(1)*x.size(2))
+            x = self.endLin(x)
+            x = x.view(origSize[0],origSize[1])
+
+        else:
+            raise ValueError("Unkown pool mode for CNN temp model {}".format(self.pool))
+
         x = torch.sigmoid(x)
 
         return x
@@ -361,7 +373,7 @@ class CNN_sceneDet(nn.Module):
 class SceneDet(nn.Module):
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
-                        chanTempMod,pretrTempMod):
+                        chanTempMod,pretrTempMod,poolTempMod):
 
         super(SceneDet,self).__init__()
 
@@ -394,7 +406,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod)
             if multiGPU:
                 self.tempModel = DataParallel(self.tempModel,dim=0)
 
@@ -463,7 +475,8 @@ def findNumbers(x):
 def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod)
+                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
+                    args.pool_temp_mod)
 
     return net
 
