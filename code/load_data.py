@@ -334,8 +334,7 @@ class TrainLoader():
 
             vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
 
-            tree = ET.parse("../data/{}/{}/result.xml".format(self.dataset,vidName)).getroot()
-            fps = float(tree.find("content").find("head").find("media").find("fps").text)
+            fps = processResults.getVideoFPS(self.videoPaths[vidInd])
 
             shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
             shotInds = np.arange(len(shotBounds))
@@ -451,8 +450,7 @@ class TestLoader():
 
         vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
-        tree = ET.parse("../data/{}/{}/result.xml".format(self.dataset,vidName)).getroot()
-        fps = float(tree.find("content").find("head").find("media").find("fps").text)
+        fps = processResults.getVideoFPS(videoPath)
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
