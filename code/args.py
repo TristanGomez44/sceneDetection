@@ -106,6 +106,9 @@ class ArgReader():
         self.parser.add_argument('--frame_att_rep_size', type=int, metavar='N',
                             help='The size of the internal representation of the frame attention model')
 
+        self.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
+                            help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
+
         self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                             help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                                 selects one of the two datasets.')
