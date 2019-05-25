@@ -282,7 +282,10 @@ def main(argv=None):
                                 success = False
 
                 wavFilePath = accVidPath.replace(".{}".format(args.merge_videos),".wav")
-                sf.write(wavFilePath,accAudioData,fs)
+                if len(accAudioData.shape) == 1:
+                    sf.write(wavFilePath,accAudioData[:,np.newaxis],fs)
+                else:
+                    sf.write(wavFilePath,accAudioData,fs)
 
                 lastFram = len(gt)
                 gt = np.array(gt).nonzero()[0]
@@ -323,9 +326,6 @@ def main(argv=None):
             #Remove the temporary wav files:
             for wavFilePath in sorted(glob.glob(videoFoldPath+"/*.wav")):
                 os.remove(wavFilePath)
-
-            #Convert the accumulated wav file into an mp3 file:
-            subprocess.run("ffmpeg -loglevel panic -i {} -acodec libmp3lame {}".format(wavFilePath,wavFilePath.replace(".wav",".mp3")),shell=True)
 
 def common_str(string1, string2):
     answer = ""
