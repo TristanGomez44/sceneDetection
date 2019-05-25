@@ -325,34 +325,43 @@ class LSTM_sceneDet(nn.Module):
 
 class CNN_sceneDet(nn.Module):
 
-    def __init__(self,layFeatCut,modelType):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True):
 
         super(CNN_sceneDet,self).__init__()
 
         if modelType == "resnet50":
-            self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
-            self.cnn.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
+            self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
         elif modelType == "resnet101":
-            self.cnn = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
-            self.cnn.load_state_dict(torch.load("../models/resnet101_imageNet.pth"))
+            self.cnn = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
+        elif modelType == "resnet18":
+            self.cnn = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
         else:
             raise ValueError("Unkown model type for CNN temporal model : ",modelType)
+
+        if pretrained:
+            if chan != 64:
+                raise ValueError("To load the pretrained weights, the CNN temp model should have 64 channels and not {}".format(chan))
+            self.cnn.load_state_dict(torch.load("../models/{}_imageNet.pth".format(modelType)))
+
+        '''
+        if poolOp == "mean":
+            self.poolOp = lambda x: x.mean(dim=-1).mean(dim=-1)
+
+        '''
 
     def forward(self,x):
 
         x = self.cnn(x)
-
         x = x.permute(0,2,1,3)
-
         x = x.mean(dim=-1).mean(dim=-1)
-
         x = torch.sigmoid(x)
 
         return x
 
 class SceneDet(nn.Module):
 
-    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU):
+    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
+                        chanTempMod,pretrTempMod):
 
         super(SceneDet,self).__init__()
 
@@ -385,7 +394,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod)
             if multiGPU:
                 self.tempModel = DataParallel(self.tempModel,dim=0)
 
@@ -454,7 +463,7 @@ def findNumbers(x):
 def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu)
+                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod)
 
     return net
 
