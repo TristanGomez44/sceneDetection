@@ -356,7 +356,7 @@ def minus(a,b):
 
 def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
     resFile = np.genfromtxt(resFilePath)
     frameInds = resFile[:,:-1]
@@ -364,10 +364,19 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     splitResFileName = os.path.splitext(os.path.basename(resFilePath))[0].split("_")
 
-    videoName = splitResFileName[2:]
-    videoName = "_".join(videoName)
+    i =0
+    epochFound = False
+    while i < len(splitResFileName) and not epochFound:
 
-    modelId = splitResFileName[0]
+        if splitResFileName[i].find("epoch") != -1:
+            epochFound = True
+        else:
+            i+=1
+
+    videoName = "_".join(splitResFileName[i+1:])
+    #videoName = "_".join(videoName)
+
+    modelId =  "_".join(splitResFileName[:i])
 
     videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
     print(videoPath)
