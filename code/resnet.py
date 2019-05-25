@@ -118,22 +118,22 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False, norm_layer=None,layFeatCut=4,maxPoolKer=(3,3),maxPoolPad=(1,1),stride=(2,2),featMap=False):
+    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False, norm_layer=None,layFeatCut=4,maxPoolKer=(3,3),maxPoolPad=(1,1),stride=(2,2),featMap=False,chan=64,inChan=3):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
-        self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=stride, padding=3,
+        self.inplanes = chan
+        self.conv1 = nn.Conv2d(inChan, chan, kernel_size=7, stride=stride, padding=3,
                                bias=False)
-        self.bn1 = norm_layer(64)
+        self.bn1 = norm_layer(chan)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=maxPoolKer, stride=stride, padding=maxPoolPad)
-        self.layer1 = self._make_layer(block, 64, layers[0], norm_layer=norm_layer,feat=(layFeatCut==1))
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==2))
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==3))
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==4))
+        self.layer1 = self._make_layer(block, chan, layers[0], norm_layer=norm_layer,feat=(layFeatCut==1))
+        self.layer2 = self._make_layer(block, chan*2, layers[1], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==2))
+        self.layer3 = self._make_layer(block, chan*4, layers[2], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==3))
+        self.layer4 = self._make_layer(block, chan*8, layers[3], stride=stride, norm_layer=norm_layer,feat=(layFeatCut==4))
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(chan*8 * block.expansion, num_classes)
         self.layFeatCut = layFeatCut
 
         for m in self.modules():
@@ -182,6 +182,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
 
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -195,6 +196,7 @@ class ResNet(nn.Module):
             layerNb += 1
 
         if not self.featMap:
+
             x = self.avgpool(x)
             x = x.view(x.size(0), -1)
 
