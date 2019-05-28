@@ -80,6 +80,12 @@ The format of the description varies from one video to another so there are some
 the algorithm and put in a folder "nodescr_youtube_large" in the "data" folder. The description are also put in a folder "descr_youtube_large",
 alors in the "data" folder.
 
+### OVSD
+
+The links to download each video from the OVSD dataset can be found on the IBM website : http://www.research.ibm.com/haifa/projects/imt/video/Video_DataSetTable.shtml
+
+Once the video are downloaded, put them in a folder called 'OVSD' in the 'data' folder. Also download the annotations (the button 'Full dataset meta-data download' at the bottom of the page) and put the folder containing them in the 'OVSD' folder as well. Ensure that the video name are the same than the annotations file. For example if a video is named 'filmA.avi' then its annotation should be named 'filmeA_scenes.txt'.
+
 ## Usage
 
 ### Scripts you have to use :
@@ -96,7 +102,24 @@ python trainVal.py -c model.config --exp_id testExperience --model_id testModel 
 
 The argument -c model.config allows the script to read the config file model.config which contains default value for all the arguments. All the arguments are detailed in the script args.py
 
-- processResults.py
+- processResults.py : contains functions to compute metrics and visualise the results of training. To plot the scores that a model produced on the video, on the video itself.
+
+```
+ python processResults.py -c model.config --score_vis_video ../results/keepLearning3/moreLayers_epoch99_Big_fish.csv --exp_id keepLearning3 --dataset_test Holly2
+```
+
+Here the score produced by the model "moreLayers" at epoch 99 (from experience 'keepLearning3') on the video 'BigFish' (from dataset 'Holly2') will be plot on the video 'BigFish'.
+The resulting video will be written at the path "../vis/keepLearning3/moreLayers_Big_fish_score.mp4".
+
+
+To plot the t-sne representation of the shot produced by a model from all the video in a dataset, use the following command :
+
+```
+python processResults.py -c model.config --exp_id testExperience --model_id testModel --seed 1 --dataset_test testDataset --test_part_beg 0 --test_part_end 0.5 --tsne
+```
+
+Here, the videos from the first half of the dataset testDataset will be processed.
+
 
 ### Other scripts
 
@@ -106,4 +129,3 @@ The other scripts are the following :
 - load_data.py : Contains the classes defining the loader to train the siamese network and the CNN-RNN
 - modelBuilder.py : Contains the classes definining the siamese model and the CNN-RNN
 - formatData.py : the script to format the data.
-- processResults.py : contains functions to compute metrics and visualise the results of training. This is the script to use to evaluate the model on a test dataset.
