@@ -282,7 +282,7 @@ class PairLoader():
 
 class TrainLoader():
 
-    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot):
+    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
 
         self.batchSize = batchSize
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -295,6 +295,7 @@ class TrainLoader():
         self.audioLen = audioLen
         self.framesPerShot = framesPerShot
         self.nbShots = 0
+        self.exp_id = exp_id
 
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
@@ -334,7 +335,7 @@ class TrainLoader():
 
             vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
 
-            fps = processResults.getVideoFPS(self.videoPaths[vidInd])
+            fps = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
 
             shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
             shotInds = np.arange(len(shotBounds))
@@ -410,7 +411,7 @@ class TrainLoader():
 
 class TestLoader():
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
         self.evalL = evalL
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -418,6 +419,8 @@ class TestLoader():
 
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.framesPerShot = framesPerShot
+
+        self.exp_id = exp_id
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -450,7 +453,7 @@ class TestLoader():
 
         vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
-        fps = processResults.getVideoFPS(videoPath)
+        fps = processResults.getVideoFPS(videoPath,self.exp_id)
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
