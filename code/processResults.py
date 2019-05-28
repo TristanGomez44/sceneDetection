@@ -15,7 +15,7 @@ from PIL import Image
 
 import subprocess
 
-def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
+def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
 
     repFile = glob.glob("../results/{}/")
 
@@ -43,16 +43,25 @@ def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
 
                 gt = gt[:len(reps)]
 
-                repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(reps)
+                colorInds = np.cumsum(gt)
 
+                print(colorInds.shape)
+                colorInds = colorInds[:,np.newaxis].repeat(framesPerShots,1)
+                print(colorInds.shape)
+                colorInds = colorInds.reshape(-1)
+                print(colorInds.shape)
+
+
+                repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(reps)
+                print(repr_tsne.shape)
                 plt.figure()
                 plt.title("T-SNE view of feature from {}".format(videoName))
-                plt.scatter(repr_tsne[:,0],repr_tsne[:,1], zorder=2,color=cmap[np.cumsum(gt)])
+                plt.scatter(repr_tsne[:,0],repr_tsne[:,1], zorder=2,color=cmap[colorInds])
                 plt.savefig("../vis/{}/{}_model{}_tsne.png".format(exp_id,videoName,model_id))
             else:
                 print("\tT-sne already done")
         else:
-            print("\tFeature for video does not {} exist".format(videoName))
+            print("\tFeature for video {} does not exist".format(videoName))
 
 def compGT(exp_id,metric,thres):
 
@@ -466,9 +475,9 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     videoRes.release()
 
-def getVideoFPS(videoPath):
-    subprocess.call("ffmpeg -i {} 2>info.txt".format(videoPath),shell=True)
-    with open('info.txt', 'r') as infoFile:
+def getVideoFPS(videoPath,exp_id=None):
+    subprocess.call("ffmpeg -i {} 2>info_{}_{}.txt".format(videoPath,os.path.basename(videoPath),exp_id),shell=True)
+    with open('info_{}_{}.txt'.format(os.path.basename(videoPath),exp_id), 'r') as infoFile:
         infos = infoFile.read()
     fps = None
     for line in infos.split("\n"):
@@ -478,7 +487,7 @@ def getVideoFPS(videoPath):
                 if info.find("fps") != -1:
                     fps = round(float(info.replace(" ","").replace("fps","")))
     if not fps:
-        raise ValueError("FPS info not found in info.txt")
+        raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
 
     return fps
 
@@ -568,7 +577,7 @@ def main(argv=None):
 
     argreader.parser.add_argument('--metric',type=str,default="IoU",metavar='METRIC',help='The metric to use. Can only be \'IoU\' for now.')
 
-    argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. The --exp_id, --model_id, --seed and --dataset_test arguments should\
+    argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should\
                                     be set.')
 
     argreader.parser.add_argument('--score_vis_frames',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
@@ -585,7 +594,7 @@ def main(argv=None):
     if args.compt_gt_true_baseline:
         comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
-        tsne(args.dataset_test,args.exp_id,args.model_id,args.seed)
+        tsne(args.dataset_test,args.exp_id,args.model_id,args.seed,args.frames_per_shot)
     if args.score_vis_frames:
         scoreVis_frames(args.dataset_test,args.score_vis_frames)
     if args.score_vis_video:
