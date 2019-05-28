@@ -324,28 +324,37 @@ class LSTM_sceneDet(nn.Module):
 
 class CNN_sceneDet(nn.Module):
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean"):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False):
 
         super(CNN_sceneDet,self).__init__()
 
         if modelType == "resnet50":
             self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
+            expansion = 4
         elif modelType == "resnet101":
             self.cnn = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
+            expansion = 4
         elif modelType == "resnet18":
             self.cnn = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
+            expansion = 1
         else:
             raise ValueError("Unkown model type for CNN temporal model : ",modelType)
+
+        if multiGPU:
+            self.cnn = DataParallel(self.cnn,dim=0)
 
         if pretrained:
             if chan != 64:
                 raise ValueError("To load the pretrained weights, the CNN temp model should have 64 channels and not {}".format(chan))
-            self.cnn.load_state_dict(torch.load("../models/{}_imageNet.pth".format(modelType)))
+
+            checkpoint = torch.load("../models/{}_imageNet.pth".format(modelType))
+            state_dict = {"module."+k: v for k,v in checkpoint.items()}
+            self.cnn.load_state_dict(state_dict)
 
         self.pool = pool
 
         if self.pool == 'linear':
-            self.endLin = nn.Linear(chan*8*64,1)
+            self.endLin = nn.Linear(chan*8*64*expansion,1)
 
     def forward(self,x):
 
@@ -357,7 +366,6 @@ class CNN_sceneDet(nn.Module):
         elif self.pool == "linear":
 
             origSize = x.size()
-
             x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3))
             x = x.contiguous().view(x.size(0),x.size(1)*x.size(2))
             x = self.endLin(x)
@@ -406,9 +414,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod)
-            if multiGPU:
-                self.tempModel = DataParallel(self.tempModel,dim=0)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU)
 
         self.nb_gpus = torch.cuda.device_count()
 
