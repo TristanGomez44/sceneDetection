@@ -22,6 +22,16 @@ from sklearn.metrics import roc_auc_score
 torch.backends.cudnn.benchmark = True
 
 def softTarget(predBatch,targetBatch,width):
+    ''' Convolve the target with a triangular window to make it smoother
+
+    Args :
+    - predBatch (torch.tensor): the batch of prediction
+    - targetBatch (torch.tensor): the batch of target
+    - width (int): the width of the triangular window (i.e. the number of steps over which the window is spreading)
+
+    Returns
+    - softTargetBatch (torch.tensor): the batch of soft targets
+    '''
 
     device = predBatch.device
     softTargetBatch = torch.zeros_like(targetBatch)
@@ -131,9 +141,6 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
             #Metrics
             total_loss += loss
 
-            #if batch_idx == 3:
-            #    break
-
     if mode == "train":
         torch.save(model.state_dict(), "../models/{}/{}_siam_epoch{}".format(args.exp_id,args.model_id, epoch))
         torch.save(audioModel.state_dict(), "../models/{}/{}_siam_audio_epoch{}".format(args.exp_id,args.model_id, epoch))
@@ -149,12 +156,24 @@ def compDistMat(feat):
     featRow = featRow.expand(feat.size(0),feat.size(0),feat.size(1))
 
     simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
+def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
+    ''' Train a model during one epoch
 
-def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode,width):
+    Args:
+    - model (torch.nn.Module): the model to be trained
+    - optim (torch.optim): the optimiser
+    - log_interval (int): the number of epochs to wait before printing a log
+    - loader (load_data.TrainLoader): the train data loader
+    - epoch (int): the current epoch
+    - args (Namespace): the namespace containing all the arguments required for training and building the network
+    - writer (tensorboardX.SummaryWriter): the writer to use to log metrics evolution to tensorboardX
+    - width (int): the width of the triangular window (i.e. the number of steps over which the window is spreading)
+
+    '''
 
     model.train()
 
-    print("Epoch",epoch," : ",mode)
+    print("Epoch",epoch," : train")
 
     total_loss = 0
     total_cover = 0
@@ -220,13 +239,28 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,m
     total_auc = roc_auc_score(allGT.view(-1).cpu().numpy(),allOut.view(-1).cpu().numpy())
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
-    writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,args.model_id,args.exp_id)
+    writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"train",args.model_id,args.exp_id)
 
-def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,mode,width):
+def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyStop,metricLastVal,maximiseMetric):
+    '''
+    Validate a model. This function computes several metrics and return the best value found until this point.
+
+    Args:
+     - model (torch.nn.Module): the model to validate
+     - log_interval (int): the number of epochs to wait before printing a log
+     - loader (load_data.TrainLoader): the train data loader
+     - epoch (int): the current epoch
+     - args (Namespace): the namespace containing all the arguments required for training and building the network
+     - writer (tensorboardX.SummaryWriter): the writer to use to log metrics evolution to tensorboardX
+     - width (int): the width of the triangular window (i.e. the number of steps over which the window is spreading)
+     - metricEarlyStop (str): the name of the metric to use for early stopping. Can be any of the metrics computed in the metricDict variable of the writeSummaries function
+     - metricLastVal (float): the best value of the metric to use early stopping until now
+     - maximiseMetric (bool): If true, the model maximising this metric will be kept.
+    '''
 
     model.eval()
 
-    print("Epoch",epoch," : ",mode)
+    print("Epoch",epoch," : val")
 
     total_loss,total_cover,total_overflow,total_auc,total_iou,nbVideos = 0,0,0,0,0,0
 
@@ -237,10 +271,10 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
     validBatch = 0
     nbVideos = 0
 
-    for batch_idx, (data, audio,target,vidNames,frameInds) in enumerate(loader):
+    for batch_idx, (data, audio,target,vidName,frameInds) in enumerate(loader):
 
-        newVideo = (vidNames[0] != currVidName) or videoBegining
-        currVidName = vidNames[0]
+        newVideo = (vidName != currVidName) or videoBegining
+        currVidName = vidName
 
         if (batch_idx % log_interval == 0):
             print("\t",loader.sumL+1,"/",loader.nbShots)
@@ -261,7 +295,7 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
 
             output,h,c = output.data,h.data,c.data
 
-        updateOutDict(outDict,output,frameIndDict,frameInds,vidNames)
+        updateOutDict(outDict,output,frameIndDict,frameInds,vidName)
 
         #loss.backward()
         #optim.zero_grad()
@@ -300,21 +334,48 @@ def epochSeqVal(model,optim,log_interval,loader, epoch, args,writer,kwargsTrain,
             allTarget = torch.cat((allTarget,target),dim=1)
             allOutput = torch.cat((allOutput,output),dim=1)
 
-    if mode == "val":
-        for key in outDict.keys():
-            fullArr = torch.cat((frameIndDict[key].float(),outDict[key].unsqueeze(1)),dim=1)
-            np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),fullArr.cpu().detach().numpy())
+    for key in outDict.keys():
+        fullArr = torch.cat((frameIndDict[key].float(),outDict[key].unsqueeze(1)),dim=1)
+        np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),fullArr.cpu().detach().numpy())
 
-    elif mode == "test":
-        for key in outDict.keys():
-            fullArr = torch.cat((frameIndDict[key],outDict[key].unsqueeze(1)),dim=0)
-            np.savetxt("../results/{}/{}_{}.csv".format(args.exp_id,args.model_id,key),fullArr.cpu().detach().numpy())
+    metricDict = writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"vali",args.model_id,args.exp_id,nbVideos=nbVideos)
 
-    writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,args.model_id,args.exp_id,nbVideos=nbVideos)
+    metricVal = metricDict[metricEarlyStop]
 
-def updateOutDict(outDict,output,frameIndDict,frameInds,vidNames):
+    if metricLastVal is None:
+        betterFound = True
+    elif maximiseMetric and metricVal > metricLastVal:
+        betterFound = True
+    elif (not maximiseMetric) and metricVal < metricLastVal:
+        betterFound = True
+    else:
+        betterFound = False
 
-    vidName = vidNames[0]
+
+    if betterFound:
+        print("Better {} found : {}".format(metricEarlyStop,metricLastVal))
+        paths = glob.glob("../models/{}/model{}_best_epoch*".format(args.exp_id,args.model_id, epoch))
+        if len(paths) > 1:
+            raise ValueError("More than one best model found for exp {} and model {}".format(exp_id,model_id))
+
+        if len(paths) != 0:
+            os.remove(paths[0])
+        torch.save(model.state_dict(), "../models/{}/model{}_best_epoch{}".format(args.exp_id,args.model_id, epoch))
+        return metricVal
+
+    else:
+        return metricLastVal
+
+def updateOutDict(outDict,output,frameIndDict,frameInds,vidName):
+    ''' Store the prediction of a model in a dictionnary with one entry per movie
+
+    Args:
+     - outDict (dict): the dictionnary where the scores will be stored
+     - output (torch.tensor): the output batch of the model
+     - frameIndDict (dict): a dictionnary collecting the index of each frame used
+     - vidName (str): the name of the video from which the score are produced
+
+    '''
 
     if vidName in outDict.keys():
         outDict[vidName] = torch.cat((output[0,:],outDict[vidName]),dim=0)
@@ -327,6 +388,15 @@ def updateOutDict(outDict,output,frameIndDict,frameInds,vidNames):
         frameIndDict[vidName] = frameInds.view(len(output[0,:]),-1).clone()
 
 def getWeights(target,classWeight):
+    '''
+    Compute the weights of each instance to compensate overrepresentation of the 0s in the dataset. This is done by interpolating between equal weights and perfect balancing
+    Args:
+     - target (torch.tensor): the target tensor
+     - classWeight : a scalar determining at which point the weights will be close from equal weights or from perfect balance.
+                    if classWeight = 0, the weights are set equal, if classWeight = 1, the weights are set to compensate exactly the small number of 'one' in the target tensor.
+    Returns:
+     - weights (torch.tensor): the weight for each instance.
+    '''
 
     oneNb = target.sum().float()
     zeroNb = (target.numel() - oneNb).float()
@@ -342,11 +412,16 @@ def getWeights(target,classWeight):
     weights[target==0] = weight[0]
 
     if target.is_cuda:
-        weight = weight.cuda()
+        weights = weights.cuda()
 
     return weights
 
 def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,writer,epoch,mode,model_id,exp_id):
+    '''
+
+
+    '''
+
 
     total_loss /= batchNb
     total_posDist /= batchNb
@@ -379,12 +454,10 @@ def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,val
     if mode != "train":
         total_auc /= sampleNb
 
-    writer.add_scalars('Losses',{model_id+"_"+mode:total_loss},epoch)
-    writer.add_scalars('Coverages',{model_id+"_"+mode:total_cover},epoch)
-    writer.add_scalars('Overflows',{model_id+"_"+mode:total_overflow},epoch)
-    writer.add_scalars('F-scores',{model_id+"_"+mode:f_score},epoch)
-    writer.add_scalars('AuC',{model_id+"_"+mode:total_auc},epoch)
-    writer.add_scalars('IoU',{model_id+"_"+mode:total_iou},epoch)
+    metricDict = {'Losse':total_loss,'Coverage':total_cover,'Overflow':total_overflow,'F-score':f_score,'AuC':total_auc,'IoU':total_iou}
+
+    for metric in metricDict:
+        writer.add_scalars(metric,{model_id+"_"+mode:metricDict[metric]},epoch)
 
     if not os.path.exists("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode)):
         header = "epoch,loss,coverage,overflow,f-score,auc,iou"
@@ -394,6 +467,8 @@ def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,val
     with open("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode),"a") as text_file:
         print(header,file=text_file)
         print("{},{},{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score,total_auc,total_iou),file=text_file)
+
+    return metricDict
 
 def get_OptimConstructor_And_Kwargs(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
@@ -415,8 +490,6 @@ def get_OptimConstructor_And_Kwargs(optimStr,momentum):
     else:
         optimConst = torch.optim.Adam
         kwargs = {'amsgrad':True}
-
-    print("Optim is :",optimConst)
 
     return optimConst,kwargs
 
@@ -470,33 +543,38 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
     elif start_mode == "fine_tune":
 
         params = torch.load(init_path)
-        net.load_state_dict(params)
+
+        state_dict = {k.replace("module.cnn.","cnn.module."): v for k,v in params.items()}
+
+        net.load_state_dict(state_dict)
         startEpoch = findLastNumbers(init_path)
 
     return startEpoch
 
-def evalAllImages(exp_id,model_id,model,audioModel,dataset_test,testLoader,cuda):
+def evalAllImages(exp_id,model_id,model,audioModel,dataset_test,testLoader,cuda,log_interval):
 
-    for batch_idx, (data,audio, _,_,imagePaths) in enumerate(testLoader):
+    for batch_idx, (data,audio, _,vidName,frameInds) in enumerate(testLoader):
 
-        imagePaths = imagePaths[0]
-        videoName = imagePaths[0].split("/")[-3]
-        print(videoName,"\t",batch_idx+1,"/",testLoader.batchNb)
+
+        print(vidName,frameInds.shape,frameInds)
+
+        if (batch_idx % log_interval == 0):
+            print("\t",testLoader.sumL+1,"/",testLoader.nbShots)
 
         if not data is None:
             if cuda:
                 data = data.cuda()
-            data = data[:,:len(imagePaths)]
+            data = data[:,:len(frameInds)]
             data = data.view(data.size(0)*data.size(1),data.size(2),data.size(3),data.size(4))
 
         if not audio is None:
             if cuda:
                 audio = audio.cuda()
-            audio = audio[:,:len(imagePaths)]
+            audio = audio[:,:len(frameInds)]
             audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
 
-        if not os.path.exists("../results/{}/{}".format(exp_id,videoName)):
-            os.makedirs("../results/{}/{}".format(exp_id,videoName))
+        if not os.path.exists("../results/{}/{}".format(exp_id,vidName)):
+            os.makedirs("../results/{}/{}".format(exp_id,vidName))
 
         if (not audioModel is None) and (not model is None):
             audioFeats = audioModel(audio)
@@ -508,10 +586,10 @@ def evalAllImages(exp_id,model_id,model,audioModel,dataset_test,testLoader,cuda)
         elif (not model is None):
             feats = model(data)
         for i,feat in enumerate(feats):
-            imageName = os.path.basename(imagePaths[i])
-            if not os.path.exists("../results/{}/{}/{}_{}.csv".format(exp_id,videoName,imageName,model_id)):
+            imageName = frameInds[i]
+            if not os.path.exists("../results/{}/{}/{}_{}.csv".format(exp_id,vidName,imageName,model_id)):
 
-                np.savetxt("../results/{}/{}/{}_{}.csv".format(exp_id,videoName,imageName,model_id),feat.detach().cpu().numpy())
+                np.savetxt("../results/{}/{}/{}_{}.csv".format(exp_id,vidName,imageName,model_id),feat.detach().cpu().numpy())
 
 def main(argv=None):
 
@@ -546,9 +624,14 @@ def main(argv=None):
 
     writer = SummaryWriter("../results/{}".format(args.exp_id))
 
+    print("Model :",args.model_id,"Experience :",args.exp_id)
+
     if args.baseline:
         baselineAllVids(args.dataset_test,args.batch_size,args.feat,args.feat_audio,args.pretrain_dataset,args.cuda,args.baseline,args.audio_len)
     elif args.comp_feat:
+
+        img_size = (args.img_width,args.img_heigth)
+        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot,args.exp_id)
 
         if args.feat != "None":
             featModel = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
@@ -556,6 +639,11 @@ def main(argv=None):
                 featModel = featModel.cuda()
             if args.init_path_visual != "None":
                 featModel.load_state_dict(torch.load(args.init_path_visual))
+            elif args.init_path != "None":
+                model = modelBuilder.netBuilder(args)
+                model.load_state_dict(torch.load(args.init_path))
+                featModel = model.featModel
+
             featModel.eval()
         else:
             featModel = None
@@ -566,14 +654,16 @@ def main(argv=None):
                 audioFeatModel = audioFeatModel.cuda()
             if args.init_path_audio != "None":
                 audioFeatModel.load_state_dict(torch.load(args.init_path_audio))
+            elif args.init_path != "None":
+                model = modelBuilder.netBuilder(args)
+                model.load_state_dict(torch.load(args.init_path))
+                audioFeatModel = model.audioFeatModel
+
             audioFeatModel.eval()
         else:
             audioFeatModel = None
 
-        img_size = (args.img_width,args.img_heigth)
-        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,1)
-
-        evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,args.dataset_test,testLoader,args.cuda)
+        evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,args.dataset_test,testLoader,args.cuda,args.log_interval)
 
     else:
 
@@ -588,41 +678,55 @@ def main(argv=None):
             torch.cuda.manual_seed(args.seed)
 
         if args.feat_audio != "None":
-            audioNet = modelBuilder.buildAudioFeatModel(args.feat_audio)
             audioLen = args.audio_len
         else:
-            audioNet = None
             audioLen = 0
         paramToOpti = []
 
         if args.train_siam:
 
-            net = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
-
             trainLoader = load_data.PairLoader(args.dataset_train,args.batch_size,img_size,args.train_part_beg,args.train_part_end,True,audioLen,args.resize_image)
             valLoader = load_data.PairLoader(args.dataset_val,args.val_batch_size,img_size,args.val_part_beg,args.val_part_end,True,audioLen,args.resize_image)
 
+            net = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
+
             trainFunc = epochSiam
             valFunc = epochSiam
-            kwargs = {'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
             if args.feat_audio != "None":
+                audioNet = modelBuilder.buildAudioFeatModel(args.feat_audio)
+
                 for p in audioNet.parameters():
                     paramToOpti.append(p)
+
+                    model,optim,log_interval,loader, epoch, args,writer,kwargs,mode
+
+            kwargsTr = {'model':model,'optim':optim,'log_interval':log_interval,'loader':loader,'epoch':epoch,'args':args,'writer':writer,'mode':'train',\
+                    'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
+
+            kwargsVal = kwargsTr
+            kwargsVal["mode"] = 'val'
 
             if args.cuda and args.feat_audio != "None":
                 audioNet = audioNet.cuda()
         else:
 
-            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,(args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot)
-            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot)
+            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
+                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
+
+            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,\
+                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
 
             #Building the net
             net = modelBuilder.netBuilder(args)
 
             trainFunc = epochSeqTr
             valFunc = epochSeqVal
-            kwargs = {}
 
+            kwargsTr = {'model':model,'optim':optim,'log_interval':log_interval,'loader':loader,'epoch':epoch,'args':args,'writer':writer,'width':width}
+            kwargsVal = kwargsTr
+
+            kwargsVal.update({"metricEarlyStop":metricEarlyStop,"metricLastVal":metricLastVal,"maximiseMetric":maximiseMetric})
+            kwargsVal.pop("optim")
 
         for p in net.parameters():
             paramToOpti.append(p)
@@ -650,6 +754,8 @@ def main(argv=None):
 
         lrCounter = 0
         widthCounter = 0
+        metricLastVal = None
+
         for epoch in range(startEpoch, args.epochs + 1):
 
             #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
@@ -657,7 +763,6 @@ def main(argv=None):
             if (epoch-1) % ((args.epochs + 1)//len(args.lr)) == 0 or epoch==startEpoch:
 
                 kwargsOpti['lr'] = args.lr[lrCounter]
-                print("Learning rate : ",kwargsOpti['lr'])
                 if args.train_visual:
                     optim = optimConst(net.parameters(), **kwargsOpti)
                 else:
@@ -669,12 +774,17 @@ def main(argv=None):
             if (epoch-1) % ((args.epochs + 1)//len(args.soft_loss_width)) == 0 or epoch==startEpoch:
 
                 width = args.soft_loss_width[widthCounter]
-                print("Soft loss width is : ",width)
                 if widthCounter<len(args.soft_loss_width)-1:
                     widthCounter += 1
 
-            trainFunc(net,optim,args.log_interval,trainLoader,epoch,args,writer,kwargs,"train",width)
-            valFunc(net,optim,args.log_interval,valLoader,epoch,args,writer,kwargs,"val",width)
+            trainFunc(**kwargsTr)
+            metricLastVal = valFunc(**kwargsVal)
+
+            if not args.train_siam:
+                kwargsVal["metricLastVal"] = metricLastVal
+
+            kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
+            kwargsTr["model"],kwargsVal["model"] = model,model
 
             #val(net,optim,valLoader,epoch,args,writer,5)
 
