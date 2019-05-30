@@ -137,6 +137,11 @@ class ArgReader():
         self.parser.add_argument('--val_batch_size', type=int,metavar='BS',
                             help='The batchsize to use for validation')
 
+        self.parser.add_argument('--metric_early_stop', type=str,metavar='METR',
+                            help='The metric to use for early stopping')
+        self.parser.add_argument('--maximise_metric', type=str2bool,metavar='BOOL',
+                            help='If true, The chosen metric for early stopping will be maximised')
+
         self.parser.add_argument('--l_min', type=int,metavar='LMIN',
                             help='The minimum length of a training sequence')
         self.parser.add_argument('--l_max', type=int,metavar='LMAX',
