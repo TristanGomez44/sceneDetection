@@ -35,25 +35,27 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
 
                 print("\tComputing t-sne")
                 repFilePaths = sorted(glob.glob("../results/{}/{}/*_{}.csv".format(exp_id,videoName,model_id)))
+                frameInd = np.array(list(map(lambda x:int(os.path.basename(x).split("_")[0]),repFilePaths)))
 
                 gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,videoName)).astype(int)
                 cmap = cm.rainbow(np.linspace(0, 1, gt.sum()+1))
 
                 reps = np.array(list(map(lambda x:np.genfromtxt(x),repFilePaths)))
 
+                print(len(reps),len(frameInd))
+
                 gt = gt[:len(reps)]
 
                 colorInds = np.cumsum(gt)
 
-                print(colorInds.shape)
-                colorInds = colorInds[:,np.newaxis].repeat(framesPerShots,1)
-                print(colorInds.shape)
-                colorInds = colorInds.reshape(-1)
-                print(colorInds.shape)
+                #Load the gt with the interval format
+                gt_interv = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,videoName)).astype(int)
 
+                #Computing the scene/color index of each frame
+                colorInds = ((gt_interv[:,0].reshape(-1,1) <= frameInd.reshape(1,-1))*(frameInd.reshape(1,-1) <= gt_interv[:,1].reshape(-1,1))).nonzero()[0]
 
                 repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(reps)
-                print(repr_tsne.shape)
+                #print(repr_tsne.shape)
                 plt.figure()
                 plt.title("T-SNE view of feature from {}".format(videoName))
                 plt.scatter(repr_tsne[:,0],repr_tsne[:,1], zorder=2,color=cmap[colorInds])
@@ -480,12 +482,15 @@ def getVideoFPS(videoPath,exp_id=None):
     with open('info_{}_{}.txt'.format(os.path.basename(videoPath),exp_id), 'r') as infoFile:
         infos = infoFile.read()
     fps = None
+
     for line in infos.split("\n"):
 
         if line.find("fps") != -1:
             for info in line.split(","):
+
                 if info.find("fps") != -1:
                     fps = round(float(info.replace(" ","").replace("fps","")))
+
     if not fps:
         raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
 
@@ -557,7 +562,21 @@ def scoreVis_frames(dataset,resFilePath):
         bigImage = Image.fromarray(bigImage)
         bigImage.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName,frameInds[i,0]))
 
+def plotCatRepr(repFolderPath):
 
+    imageRep = None
+    for repPath in sorted(glob.glob(repFolderPath+"/*.csv"),key=modelBuilder.findNumbers):
+
+        rep = np.genfromtxt(repPath)
+
+        if imageRep is None:
+            imageRep = rep.unsqueeze(1)
+        else:
+            imageRep = torch.cat((imageRep,rep.unsqueeze(1)),dim=1)
+
+    imageRep = 255*(imageRep-imageRep.min())/(imageRep.max()-imageRep.min())
+    imageRep = Image.fromarray(imageRep)
+    imageRep.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName))
 
 def main(argv=None):
 
