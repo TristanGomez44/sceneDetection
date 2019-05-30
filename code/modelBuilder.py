@@ -366,7 +366,7 @@ class CNN_sceneDet(nn.Module):
         elif self.pool == "linear":
 
             origSize = x.size()
-            x = x.view(x.size(0)*x.size(1),x.size(2),x.size(3))
+            x = x.contiguous().view(x.size(0)*x.size(1),x.size(2),x.size(3))
             x = x.contiguous().view(x.size(0),x.size(1)*x.size(2))
             x = self.endLin(x)
             x = x.view(origSize[0],origSize[1])
