@@ -190,11 +190,11 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
         if target.sum() > 0:
 
             if (batch_idx % log_interval == 0):
-                print("\t",loader.sumL+1,"/",loader.nbShots)
+                print("\t",batch_idx,"/",len(loader.dataset)//(len(data)*len(target[0])))
 
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
-                if not audio is None:
+                if not audio[0] is None:
                     audio = audio.cuda()
 
             if args.temp_model.find("resnet") != -1:
@@ -555,9 +555,6 @@ def evalAllImages(exp_id,model_id,model,audioModel,dataset_test,testLoader,cuda,
 
     for batch_idx, (data,audio, _,vidName,frameInds) in enumerate(testLoader):
 
-
-        print(vidName,frameInds.shape,frameInds)
-
         if (batch_idx % log_interval == 0):
             print("\t",testLoader.sumL+1,"/",testLoader.nbShots)
 
@@ -641,7 +638,9 @@ def main(argv=None):
                 featModel.load_state_dict(torch.load(args.init_path_visual))
             elif args.init_path != "None":
                 model = modelBuilder.netBuilder(args)
-                model.load_state_dict(torch.load(args.init_path))
+                params = torch.load(args.init_path)
+                state_dict = {k.replace("module.cnn.","cnn.module."): v for k,v in params.items()}
+                model.load_state_dict(state_dict)
                 featModel = model.featModel
 
             featModel.eval()
@@ -656,7 +655,9 @@ def main(argv=None):
                 audioFeatModel.load_state_dict(torch.load(args.init_path_audio))
             elif args.init_path != "None":
                 model = modelBuilder.netBuilder(args)
-                model.load_state_dict(torch.load(args.init_path))
+                params = torch.load(args.init_path)
+                state_dict = {k.replace("module.cnn.","cnn.module."): v for k,v in params.items()}
+                model.load_state_dict(state_dict)
                 audioFeatModel = model.audioFeatModel
 
             audioFeatModel.eval()
@@ -698,9 +699,7 @@ def main(argv=None):
                 for p in audioNet.parameters():
                     paramToOpti.append(p)
 
-                    model,optim,log_interval,loader, epoch, args,writer,kwargs,mode
-
-            kwargsTr = {'model':model,'optim':optim,'log_interval':log_interval,'loader':loader,'epoch':epoch,'args':args,'writer':writer,'mode':'train',\
+            kwargsTr = {'log_interval':args.log_interval,'loader':trainLoader,'args':args,'writer':writer,'mode':'train',\
                     'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
 
             kwargsVal = kwargsTr
@@ -710,8 +709,12 @@ def main(argv=None):
                 audioNet = audioNet.cuda()
         else:
 
-            trainLoader = load_data.TrainLoader(args.batch_size,args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
+
+            train_dataset = load_data.SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
                                                 (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
+            sampler = load_data.Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
+            trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
+                              pin_memory=False,num_workers=args.num_workers)
 
             valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,\
                                                 (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
@@ -722,11 +725,11 @@ def main(argv=None):
             trainFunc = epochSeqTr
             valFunc = epochSeqVal
 
-            kwargsTr = {'model':model,'optim':optim,'log_interval':log_interval,'loader':loader,'epoch':epoch,'args':args,'writer':writer,'width':width}
-            kwargsVal = kwargsTr
+            kwargsTr = {'log_interval':args.log_interval,'loader':trainLoader,'args':args,'writer':writer}
+            kwargsVal = kwargsTr.copy()
 
-            kwargsVal.update({"metricEarlyStop":metricEarlyStop,"metricLastVal":metricLastVal,"maximiseMetric":maximiseMetric})
-            kwargsVal.pop("optim")
+            kwargsVal['loader'] = valLoader
+            kwargsVal.update({"metricEarlyStop":args.metric_early_stop,"maximiseMetric":args.maximise_metric})
 
         for p in net.parameters():
             paramToOpti.append(p)
@@ -768,6 +771,8 @@ def main(argv=None):
                 else:
                     optim = optimConst(net.getParams(), **kwargsOpti)
 
+                kwargsTr["optim"] = optim
+
                 if lrCounter<len(args.lr)-1:
                     lrCounter += 1
 
@@ -776,15 +781,19 @@ def main(argv=None):
                 width = args.soft_loss_width[widthCounter]
                 if widthCounter<len(args.soft_loss_width)-1:
                     widthCounter += 1
+                kwargsTr["width"] = width
 
+
+            kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
+            kwargsTr["model"],kwargsVal["model"] = net,net
             trainFunc(**kwargsTr)
-            metricLastVal = valFunc(**kwargsVal)
 
             if not args.train_siam:
                 kwargsVal["metricLastVal"] = metricLastVal
-
-            kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
-            kwargsTr["model"],kwargsVal["model"] = model,model
+                kwargsVal["width"] = width
+                metricLastVal = valFunc(**kwargsVal)
+            else:
+                valFunc(**kwargsVal)
 
             #val(net,optim,valLoader,epoch,args,writer,5)
 
