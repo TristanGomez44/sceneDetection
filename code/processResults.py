@@ -14,6 +14,7 @@ import cv2
 from PIL import Image
 
 import subprocess
+from skimage.transform import resize
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
 
@@ -41,8 +42,12 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
                 cmap = cm.rainbow(np.linspace(0, 1, gt.sum()+1))
 
                 reps = np.array(list(map(lambda x:np.genfromtxt(x),repFilePaths)))
-
-                print(len(reps),len(frameInd))
+                imageRep = 255*(reps-reps.min())/(reps.max()-reps.min())
+                imageRep = imageRep.transpose()
+                imageRep = resize(imageRep,(300,1000),mode="constant", order=0,anti_aliasing=True)
+                imageRep = Image.fromarray(imageRep)
+                imageRep = imageRep.convert('RGB')
+                imageRep.save("../vis/{}/{}_model{}_catRepr.png".format(exp_id,model_id,videoName))
 
                 gt = gt[:len(reps)]
 
@@ -562,22 +567,6 @@ def scoreVis_frames(dataset,resFilePath):
         bigImage = Image.fromarray(bigImage)
         bigImage.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName,frameInds[i,0]))
 
-def plotCatRepr(repFolderPath):
-
-    imageRep = None
-    for repPath in sorted(glob.glob(repFolderPath+"/*.csv"),key=modelBuilder.findNumbers):
-
-        rep = np.genfromtxt(repPath)
-
-        if imageRep is None:
-            imageRep = rep.unsqueeze(1)
-        else:
-            imageRep = torch.cat((imageRep,rep.unsqueeze(1)),dim=1)
-
-    imageRep = 255*(imageRep-imageRep.min())/(imageRep.max()-imageRep.min())
-    imageRep = Image.fromarray(imageRep)
-    imageRep.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName))
-
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -596,11 +585,13 @@ def main(argv=None):
 
     argreader.parser.add_argument('--metric',type=str,default="IoU",metavar='METRIC',help='The metric to use. Can only be \'IoU\' for now.')
 
-    argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should\
-                                    be set.')
+    argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. Also plots the representation of a video side by side to make an image. \
+                                    The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should be set.')
 
     argreader.parser.add_argument('--score_vis_frames',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
     argreader.parser.add_argument('--score_vis_video',type=str,help='To plot the scene change score on the video itself. Requires the --dataset_test and --exp_id arguments to be set. The value is a path to a result file.')
+
+    argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -618,6 +609,11 @@ def main(argv=None):
         scoreVis_frames(args.dataset_test,args.score_vis_frames)
     if args.score_vis_video:
         scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
+    if args.plot_cat_repr:
+        plotCatRepr(args.plot_cat_repr)
 
+
+
+plotCatRepr
 if __name__ == "__main__":
     main()
