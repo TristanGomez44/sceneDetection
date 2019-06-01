@@ -283,6 +283,140 @@ class PairLoader():
 
         return torch.tensor(vggish_input.waveform_to_examples(audioData/32768.0,self.fsDict[audioPath])).unsqueeze(0).float()
 
+class Sampler(torch.utils.data.sampler.Sampler):
+    r"""Base class for all Samplers.
+
+    Every Sampler subclass has to provide an __iter__ method, providing a way
+    to iterate over indices of dataset elements, and a __len__ method that
+    returns the length of the returned iterators.
+    """
+
+    def __init__(self, nb_videos,nbTotalShots,nbShotPerSeq):
+        self.nb_videos = nb_videos
+
+        self.length = nbTotalShots//nbShotPerSeq
+    def __iter__(self):
+        return iter(torch.randint(self.nb_videos,(self.length,)))
+
+    def __len__(self):
+        return self.length
+
+def collateSeq(batch):
+
+    res = list(zip(*batch))
+
+    res[0] = torch.cat(res[0],dim=0)
+    if not res[1][0] is None:
+        res[1] = torch.cat(res[1],dim=0)
+    res[2] = torch.cat(res[2],dim=0)
+
+    return res
+
+class SeqTrDataset(torch.utils.data.Dataset):
+
+    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
+
+        super(SeqTrDataset, self).__init__()
+
+        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
+        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
+
+        self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
+        self.imgSize = imgSize
+        self.lMin,self.lMax = lMin,lMax
+        self.dataset = dataset
+        self.audioLen = audioLen
+        self.framesPerShot = framesPerShot
+        self.nbShots = 0
+        self.exp_id = exp_id
+
+        for videoPath in self.videoPaths:
+            videoFold = os.path.splitext(videoPath)[0]
+            self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        if not resizeImage:
+            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
+        else:
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+
+    def __len__(self):
+        return self.nbShots
+
+    def __getitem__(self,vidInd):
+
+        data = torch.zeros(self.framesPerShot*self.lMax,3,self.imgSize[0],self.imgSize[1])
+        targ = torch.zeros(self.lMax)
+        vidNames = []
+
+        vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
+
+        fps = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
+
+        shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
+        shotInds = np.arange(len(shotBounds))
+
+        gt = getGT(self.dataset,vidName)
+
+        #The scene number of each shot
+        gt = np.cumsum(gt)
+
+        #Permutate the scenes
+        gt = self.permuteScenes(gt)
+
+        #Select some shots
+        zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
+        np.random.shuffle(zipped)
+        zipped = zipped[:self.lMax]
+
+        if len(zipped) < self.lMax:
+
+            repeatedShotInd = np.random.randint(len(zipped),size=self.lMax-len(zipped))
+            zipped = np.concatenate((zipped,zipped[repeatedShotInd]),axis=0)
+
+        #If the shots are not sorted, each shot is very likely to be followed by a shot from a different scene
+        #Sorting them balance this effect.
+        zipped = zipped[zipped[:,1].argsort()]
+
+        shotInds,gt = zipped.transpose()
+
+        #A boolean array indicating if a selected shot in preceded by a shot from a different scene
+        gt[1:] = (gt[1:] !=  gt[:-1])
+        gt[0] = 0
+
+        shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
+        frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,)).long()
+
+        frameInds = frameInds.transpose(dim0=0,dim1=1)
+        frameInds = frameInds.contiguous().view(-1)
+
+        video = pims.Video(self.videoPaths[vidInd])
+
+        arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
+        self.preprocAudio = transforms.Compose([arrToExamp])
+
+        frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
+
+        if self.audioLen > 0:
+            audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
+            audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
+            audioSeq = audioSeq.unsqueeze(0)
+        else:
+            audioSeq = None
+
+        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName
+
+    def sampleAFrame(self,x):
+        return x[np.random.randint(0,len(x))]
+
+    def permuteScenes(self,gt):
+        randScenePerm = np.random.permutation(int(gt.max()+1))
+        gt_perm = np.zeros_like(gt)
+        for j in range(len(gt)):
+            gt_perm[j] = randScenePerm[gt[j]]
+        gt = gt_perm
+        return gt
+
 class TrainLoader():
 
     def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
@@ -540,45 +674,40 @@ def main():
     torch.manual_seed(0)
     torch.cuda.manual_seed(0)
 
+    def testLoader(trainLoader,nbBatch_max=20,countFirst=True):
+        nbBatch = 0
+        time_start = time.time()
+        timeList = np.zeros(nbBatch_max-(not countFirst))
+        for batch in trainLoader:
+            #print(batch[0][0].size(),batch[0][1].size(),batch[0][2].size(),batch[0][3])
 
-    '''
-    trainLoad = TrainSeqLoader(1,"OVSD",0,0.5,10,20,(299,299))
-    for i,(data,targ) in enumerate(trainLoad):
+            if not (nbBatch==0 and not countFirst):
+                timeList[nbBatch-(not countFirst)] = time.time()-time_start
 
-        print(type(data))
-        print(data.size(),targ.size())
+            nbBatch += 1
+            time_start = time.time()
+            if nbBatch == nbBatch_max:
+                break
+        end_time = time.time()
 
-        for j,img in enumerate(data[0]):
+        print("Time per batch : ",timeList.mean(),timeList.std(),timeList)
 
-            img = 255*np.array(((img-img.min())/(img.max()-img.min())).permute(1,2,0))
+    train_dataset = SeqTrDataset(4,"Holly2",0,0.9,25,35,(298,298),1,False,1,"TestOfPytorchLoader")
+    sampler = Sampler(len(train_dataset.videoPaths))
 
-            cv2.imwrite("../vis/trainVis_{}_{}.png".format(i,j),img)
+    for i in [4,8]:
+        trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,
+                          batch_size=4,
+                          sampler=sampler,
+                          collate_fn=collateSeq, # use custom collate function here
+                          pin_memory=True,
+                          num_workers=i)
 
-        sys.exit(0)
-    '''
+        print("num_workers",i)
+        testLoader(trainLoader,countFirst=False)
 
-    trainLoad = TrainLoader(1,"OVSD",0,0.5,10,20,(299,299),1,True,3)
-    for i,(data,audio,targ,vidName) in enumerate(trainLoad):
-        print(data.size(),audio.size(),targ.size(),vidName)
-
-        break
-
-    '''
-
-    testLoad = TestLoader(20,"OVSD",0,0.5,(299,299),1,True,3)
-    for i,(data,audio,targ,vidName) in enumerate(testLoad):
-        print(data.size(),audio.size(),targ.size(),vidName)
-
-        break
-    '''
-
-
-    '''
-    pairLoad = PairLoader("OVSD",16,(299,299),0,0.5,True,1)
-    for videoNames,anch,pos,neg,anchAudio,posAudio,negAudio,targ1,targ2,targ3 in pairLoad:
-        print(videoNames,anch.size(),anchAudio.size(),targ1.size())
-        sys.exit(0)
-    '''
+    trainLoader = TrainLoader(4,"Holly2",0,0.9,25,35,(298,298),1,False,1,"TestOfPytorchLoader")
+    testLoader(trainLoader)
 
 if __name__ == "__main__":
     main()
