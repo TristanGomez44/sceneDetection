@@ -190,7 +190,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
         if target.sum() > 0:
 
             if (batch_idx % log_interval == 0):
-                print("\t",batch_idx,"/",len(loader.dataset)//(len(data)*len(target[0])))
+                print("\t",batch_idx*len(data)*len(target[0]),"/",len(loader.dataset))
 
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
@@ -709,9 +709,8 @@ def main(argv=None):
                 audioNet = audioNet.cuda()
         else:
 
-
             train_dataset = load_data.SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
-                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
+                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots)
             sampler = load_data.Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
             trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
                               pin_memory=False,num_workers=args.num_workers)
