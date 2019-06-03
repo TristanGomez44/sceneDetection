@@ -242,6 +242,9 @@ class ArgReader():
         self.parser.add_argument('--mining_mode', type=str,metavar='MODE',
                             help="The mining mode to use to train the siamese net. Can only be \'offline\'.")
 
+        self.parser.add_argument('--max_shots', type=int,metavar='NOTE',
+                            help="The maximum number of shots to use during an epoch before validating")
+
         self.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
                             help="To use target soften with a triangular kernel.")
         self.parser.add_argument('--soft_loss_width', type=str2FloatList,metavar='MODE',
