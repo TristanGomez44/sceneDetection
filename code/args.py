@@ -156,6 +156,9 @@ class ArgReader():
         self.parser.add_argument('--pretr_temp_mod', type=str2bool, metavar='S',
                             help='To have the temporal model pretrained on ImageNet, if it is a CNN')
 
+        self.parser.add_argument('--dil_temp_mod', type=int, metavar='S',
+                            help='The dilation of the temporal model convolution if it is a CNN.')
+
         self.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
                             help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
 

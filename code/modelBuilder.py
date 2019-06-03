@@ -324,7 +324,7 @@ class LSTM_sceneDet(nn.Module):
 
 class CNN_sceneDet(nn.Module):
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -381,7 +381,7 @@ class CNN_sceneDet(nn.Module):
 class SceneDet(nn.Module):
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod):
+                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod):
 
         super(SceneDet,self).__init__()
 
@@ -414,7 +414,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -482,7 +482,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
                     args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod)
+                    args.pool_temp_mod,args.dil_temp_mod)
 
     return net
 
