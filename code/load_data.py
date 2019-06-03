@@ -314,12 +314,13 @@ def collateSeq(batch):
 
 class SeqTrDataset(torch.utils.data.Dataset):
 
-    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
+    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id,max_shots):
 
         super(SeqTrDataset, self).__init__()
 
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
         self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
+        self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
 
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.imgSize = imgSize
@@ -330,15 +331,20 @@ class SeqTrDataset(torch.utils.data.Dataset):
         self.nbShots = 0
         self.exp_id = exp_id
 
-        for videoPath in self.videoPaths:
-            videoFold = os.path.splitext(videoPath)[0]
-            self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+        if max_shots != -1:
+            self.nbShots = max_shots
+        else:
+            for videoPath in self.videoPaths:
+                videoFold = os.path.splitext(videoPath)[0]
+                self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+
+        self.FPSDict = {}
 
     def __len__(self):
         return self.nbShots
@@ -350,6 +356,9 @@ class SeqTrDataset(torch.utils.data.Dataset):
         vidNames = []
 
         vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
+
+        if not self.videoPaths[vidInd] in self.FPSDict.keys():
+            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
 
         fps = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
 
@@ -395,12 +404,13 @@ class SeqTrDataset(torch.utils.data.Dataset):
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
+        print(vidName,frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
         frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
 
         if self.audioLen > 0:
             audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
             audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
-            audioSeq = audioSeq.unsqueeze(0)
+            audioSeq = audioSeq.unsqueeze(0).float()
         else:
             audioSeq = None
 
@@ -435,6 +445,7 @@ class TrainLoader():
         self.exp_id = exp_id
 
         for videoPath in self.videoPaths:
+
             videoFold = os.path.splitext(videoPath)[0]
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
@@ -553,6 +564,7 @@ class TestLoader():
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
         self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
+        self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
 
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.framesPerShot = framesPerShot
@@ -634,7 +646,7 @@ class TestLoader():
         return (starts[1:]+starts[:-1])//2
 
 def readAudio(audioData,i,fps,fs,audio_len):
-    time = i/fps
+    time = float(i)/float(fps)
     pos = time*fs
     interv = audio_len*fs/2
     sampleToWrite = audioData[int(round(pos-interv)):int(round(pos+interv)),:]
