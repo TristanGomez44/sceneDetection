@@ -483,7 +483,9 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     videoRes.release()
 
 def getVideoFPS(videoPath,exp_id=None):
-    subprocess.call("ffmpeg -i {} 2>info_{}_{}.txt".format(videoPath,os.path.basename(videoPath),exp_id),shell=True)
+
+    if not os.path.exists("info_{}_{}.txt".format(os.path.basename(videoPath),exp_id)):
+        subprocess.call("ffmpeg -i {} 2>info_{}_{}.txt".format(videoPath,os.path.basename(videoPath),exp_id),shell=True)
     with open('info_{}_{}.txt'.format(os.path.basename(videoPath),exp_id), 'r') as infoFile:
         infos = infoFile.read()
     fps = None
@@ -496,7 +498,7 @@ def getVideoFPS(videoPath,exp_id=None):
                 if info.find("fps") != -1:
                     fps = round(float(info.replace(" ","").replace("fps","")))
 
-    if not fps:
+    if fps is None:
         raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
 
     return fps
@@ -612,8 +614,5 @@ def main(argv=None):
     if args.plot_cat_repr:
         plotCatRepr(args.plot_cat_repr)
 
-
-
-plotCatRepr
 if __name__ == "__main__":
     main()
