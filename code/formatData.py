@@ -315,7 +315,8 @@ def main(argv=None):
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
                 shotBoundsTime = shotdetect.extract_shots_with_ffprobe(accVidPath.replace("_tmp",""))
-                shotBoundsFrame = (np.array(shotBoundsTime)*CV_DEF_FPS).astype(int)
+                fps = processResults.getVideoFPS(accVidPath.replace("_tmp",""))
+                shotBoundsFrame = (np.array(shotBoundsTime)*fps).astype(int)
 
                 frameNb = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName))[-1,1]
                 starts = np.concatenate(([0],shotBoundsFrame),axis=0)
@@ -326,6 +327,18 @@ def main(argv=None):
             #Remove the temporary wav files:
             for wavFilePath in sorted(glob.glob(videoFoldPath+"/*.wav")):
                 os.remove(wavFilePath)
+
+            #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only 10 videos in this case)
+            resPath = "../data/youtube_large/{}/result.xml".format(vidName)
+            res = processResults.xmlToArray(resPath)
+
+            if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
+
+                if not os.path.exists("../data/youtBadShotDet/"):
+                    os.makedirs("../data/youtBadShotDet/")
+
+                shutil.move(os.path.dirname(resPath),"../data/youtBadShotDet/")
+                shutil.move(os.path.dirname(resPath)+".mp4","../data/youtBadShotDet/")
 
 def common_str(string1, string2):
     answer = ""
