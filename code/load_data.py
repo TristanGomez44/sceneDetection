@@ -342,7 +342,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
-            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.RandomResizedCrop(imgSize),transforms.ToTensor(),normalize])
 
         self.FPSDict = {}
 
@@ -377,7 +377,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
         np.random.shuffle(zipped)
         zipped = zipped[:self.lMax]
-
         if len(zipped) < self.lMax:
 
             repeatedShotInd = np.random.randint(len(zipped),size=self.lMax-len(zipped))
@@ -404,7 +403,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
-        print(vidName,frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
         frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
 
         if self.audioLen > 0:
@@ -575,7 +573,7 @@ class TestLoader():
         if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
-            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.CenterCrop(imgSize),transforms.ToTensor(),normalize])
 
         self.audioLen = audioLen
         self.nbShots =0
