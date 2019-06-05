@@ -241,9 +241,15 @@ def main(argv=None):
 
                 accumulatedVideo = None
                 gt = []
+                startFr = -1
                 accAudioData = None
 
-                for k,videoPath in enumerate(sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos)))):
+                fileToCat = ''
+
+                clips = sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos)))
+                clips = list(filter(lambda x: x.find("_cut.") ==-1,clips))
+
+                for k,videoPath in enumerate(clips):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
@@ -261,25 +267,26 @@ def main(argv=None):
                     else:
                         stopFrame = nbFrames
 
-                    i=0
-                    success=True
-                    while success:
-                        success, imageRaw = cap.read()
+                    gt.append([startFr+1,stopFrame])
+                    startFr = stopFrame
 
-                        if success:
-                            if accumulatedVideo is None:
-                                accumulatedVideo = cv2.VideoWriter(accVidPath, fourcc, fps, (imageRaw.shape[1],imageRaw.shape[0]))
+                    if args.dataset == "youtube_large":
+                        #Remove the end landmark with ffpmeg
+                        subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
+                        fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
+                    else:
+                        fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath))
 
-                            accumulatedVideo.write(imageRaw)
-                            if i==0:
-                                gt.append(1)
-                            else:
-                                gt.append(0)
+                with open(videoFoldPath+"/fileToCat.txt","w") as text_file:
+                    print(fileToCat,file=text_file)
 
-                            i += 1
+                #Concatenate the videos
+                subprocess.call("ffmpeg -v error -safe 0 -f concat -i {} -c copy -an {}".format(videoFoldPath+"/fileToCat.txt",accVidPath.replace("_tmp","")),shell=True)
 
-                            if i>=stopFrame:
-                                success = False
+                if args.dataset == "youtube_large":
+                    #Removing cut file created by ffmpeg
+                    for cutClipPath in sorted(glob.glob(videoFoldPath+"/*cut.{}".format(args.merge_videos))):
+                        os.remove(cutClipPath)
 
                 wavFilePath = accVidPath.replace(".{}".format(args.merge_videos),".wav")
                 if len(accAudioData.shape) == 1:
@@ -287,28 +294,10 @@ def main(argv=None):
                 else:
                     sf.write(wavFilePath,accAudioData,fs)
 
-                lastFram = len(gt)
-                gt = np.array(gt).nonzero()[0]
-
-                gt = np.concatenate((gt,[lastFram]),axis=0)
-
-                gt = np.concatenate((gt[:-1,np.newaxis],gt[1:,np.newaxis]-1),axis=1)
-
-                gt[-1,1] += 1
-
                 vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
 
                 np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName),gt)
-                accumulatedVideo.release()
 
-                #Changing the video resolution
-                if args.dataset == "youtube_large":
-                    #For youtube_large, also removing the black areas in the video and the "movie clip" symbol in the bottom
-                    subprocess.run("ffmpeg -loglevel panic -i {} -filter:v \"crop=in_w:in_h-2*50,scale={}:{}\" {}".format(accVidPath,args.img_width,args.img_heigth,accVidPath.replace("_tmp","")),shell=True)
-                else:
-                    subprocess.run("ffmpeg -loglevel panic -i {} -filter:v \"scale={}:{}\" {}".format(accVidPath,args.img_width,args.img_heigth,accVidPath.replace("_tmp","")),shell=True)
-
-                os.remove(accVidPath)
                 os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
 
             #Detecting shots
@@ -320,7 +309,7 @@ def main(argv=None):
 
                 frameNb = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName))[-1,1]
                 starts = np.concatenate(([0],shotBoundsFrame),axis=0)
-                ends =  np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
+                ends = np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
                 shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
