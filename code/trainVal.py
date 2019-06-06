@@ -715,7 +715,7 @@ def main(argv=None):
             trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
                               pin_memory=False,num_workers=args.num_workers)
 
-            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.test_part_beg,args.test_part_end,\
+            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
                                                 (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
 
             #Building the net
