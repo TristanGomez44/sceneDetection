@@ -284,11 +284,7 @@ class PairLoader():
         return torch.tensor(vggish_input.waveform_to_examples(audioData/32768.0,self.fsDict[audioPath])).unsqueeze(0).float()
 
 class Sampler(torch.utils.data.sampler.Sampler):
-    r"""Base class for all Samplers.
-
-    Every Sampler subclass has to provide an __iter__ method, providing a way
-    to iterate over indices of dataset elements, and a __len__ method that
-    returns the length of the returned iterators.
+    """ The sampler for the SeqTrDataset dataset
     """
 
     def __init__(self, nb_videos,nbTotalShots,nbShotPerSeq):
@@ -313,6 +309,25 @@ def collateSeq(batch):
     return res
 
 class SeqTrDataset(torch.utils.data.Dataset):
+    '''
+    The dataset to sample sequence of frames from videos
+
+    When the method __getitem__(i) is called, the dataset select some shots from the video i, select frame(s) from each shot, shuffle them, regroup them by scene and
+    returns them. It can also returns the MFCC coefficient of a sound extract for each shot.
+
+    Args:
+    - dataset (str): the name of the dataset to use
+    - propStart (float): the proportion of the dataset at which to start using the videos. For example : propEnd=0.5 and propEnd=1 will only use the last half of the videos
+    - propEnd (float): the proportion of the dataset at which to stop using the videos. For example : propEnd=0 and propEnd=0.5 will only use the first half of the videos
+    - lMin (int): the minimum length of a sequence during training
+    - lMax (int): the maximum length of a sequence during training
+    - imgSize (tuple): a tuple containing (in order) the width and size of the image
+    - audioLen (int): the length of the audio extract for each shot
+    - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
+    - framesPerShot (int): the number of frames to use to reprensent each shot
+    - exp_id (str): the name of the experience
+    - max_shots (int): the total number of shot to process before stopping the training epoch. The youtube_large dataset contains a million shots, which is why this argument is useful.
+    '''
 
     def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id,max_shots):
 
@@ -374,7 +389,14 @@ class SeqTrDataset(torch.utils.data.Dataset):
         gt = self.permuteScenes(gt)
 
         #Select some shots
-        zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
+        #zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
+
+        try:
+            zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
+        except ValueError:
+            print(vidName,len(shotInds),len(gt))
+            sys.exit(0)
+
         np.random.shuffle(zipped)
         zipped = zipped[:self.lMax]
         if len(zipped) < self.lMax:
@@ -403,7 +425,11 @@ class SeqTrDataset(torch.utils.data.Dataset):
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
-        frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
+        try:
+            frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
+        except IndexError:
+            print(vidName,frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max(),gt.max())
+            sys.exit(0)
 
         if self.audioLen > 0:
             audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
@@ -414,139 +440,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName
 
-    def sampleAFrame(self,x):
-        return x[np.random.randint(0,len(x))]
-
-    def permuteScenes(self,gt):
-        randScenePerm = np.random.permutation(int(gt.max()+1))
-        gt_perm = np.zeros_like(gt)
-        for j in range(len(gt)):
-            gt_perm[j] = randScenePerm[gt[j]]
-        gt = gt_perm
-        return gt
-
-class TrainLoader():
-
-    def __init__(self,batchSize,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
-
-        self.batchSize = batchSize
-        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
-
-        self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
-        self.imgSize = imgSize
-        self.lMin,self.lMax = lMin,lMax
-        self.dataset = dataset
-        self.audioLen = audioLen
-        self.framesPerShot = framesPerShot
-        self.nbShots = 0
-        self.exp_id = exp_id
-
-        for videoPath in self.videoPaths:
-
-            videoFold = os.path.splitext(videoPath)[0]
-            self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
-
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        if not resizeImage:
-            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
-        else:
-            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
-
-    def __iter__(self):
-
-        self.sumL = 0
-        return self
-
-    def __next__(self):
-
-        if self.sumL*self.batchSize > self.nbShots:
-            raise StopIteration
-
-        l = np.random.randint(self.lMin,self.lMax+1)
-        self.sumL += l
-
-        vidInds = self.nonRepRandInt(len(self.videoPaths),self.batchSize)
-
-        data = torch.zeros(self.batchSize,self.framesPerShot*l,3,self.imgSize[0],self.imgSize[1])
-        targ = torch.zeros(self.batchSize,l)
-        vidNames = []
-
-        if self.audioLen > 0:
-            audio = torch.zeros(self.batchSize,self.framesPerShot*l,1,int(96*self.audioLen),64).float()
-        else:
-            audio = None
-
-        for i,vidInd in enumerate(vidInds):
-
-            vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
-
-            fps = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
-
-            shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
-            shotInds = np.arange(len(shotBounds))
-
-            gt = getGT(self.dataset,vidName)
-
-            #The scene number of each shot
-            gt = np.cumsum(gt)
-
-            #Permutate the scenes
-            gt = self.permuteScenes(gt)
-
-            #Select some shots
-            zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
-            np.random.shuffle(zipped)
-            zipped = zipped[:l]
-
-            if len(zipped) < l:
-
-                repeatedShotInd = np.random.randint(len(zipped),size=l-len(zipped))
-                zipped = np.concatenate((zipped,zipped[repeatedShotInd]),axis=0)
-
-            #If the shots are not sorted, each shot is very likely to be followed by a shot from a different scene
-            #Sorting them balance this effect.
-            zipped = zipped[zipped[:,1].argsort()]
-
-            shotInds,gt = zipped.transpose()
-
-            #A boolean array indicating if a selected shot in preceded by a shot from a different scene
-            gt[1:] = (gt[1:] !=  gt[:-1])
-            gt[0] = 0
-
-            shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-            frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,)).long()
-
-            frameInds = frameInds.transpose(dim0=0,dim1=1)
-            frameInds = frameInds.contiguous().view(-1)
-
-            video = pims.Video(self.videoPaths[vidInd])
-
-            arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
-            self.preprocAudio = transforms.Compose([arrToExamp])
-
-            frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
-
-            if self.audioLen > 0:
-                audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
-                audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
-                audio[i] = audioSeq
-
-            data[i] = frameSeq
-            targ[i] = torch.tensor(gt.astype(float).astype(int))
-            vidNames.append(vidName)
-
-        return data,audio,targ,vidNames
-
-    def sampleAFrame(self,x):
-        return x[np.random.randint(0,len(x))]
-
-    def nonRepRandInt(self,nbMax,size):
-        ints = np.arange(0,nbMax)
-        np.random.shuffle(ints)
-        ints = ints[:size]
-        return ints
-
     def permuteScenes(self,gt):
         randScenePerm = np.random.permutation(int(gt.max()+1))
         gt_perm = np.zeros_like(gt)
@@ -556,6 +449,21 @@ class TrainLoader():
         return gt
 
 class TestLoader():
+    '''
+    The dataset to sample sequence of frames from videos. As the video contains a great number of shot,
+    each video is processed through several batches and each batch contain only one sequence.
+
+    Args:
+    - evalL (int): the length of a sequence in a batch. A big value will reduce the number of batches necessary to process a whole video
+    - dataset (str): the name of the dataset
+    - propStart (float): the proportion of the dataset at which to start using the videos. For example : propEnd=0.5 and propEnd=1 will only use the last half of the videos
+    - propEnd (float): the proportion of the dataset at which to stop using the videos. For example : propEnd=0 and propEnd=0.5 will only use the first half of the videos
+    - imgSize (tuple): a tuple containing (in order) the width and size of the image
+    - audioLen (int): the length of the audio extract for each shot
+    - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
+    - framesPerShot (int): the number of frames to use to reprensent each shot
+    - exp_id (str): the name of the experience
+    '''
 
     def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
         self.evalL = evalL
@@ -563,7 +471,6 @@ class TestLoader():
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
         self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
         self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
-
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.framesPerShot = framesPerShot
 
@@ -607,10 +514,6 @@ class TestLoader():
 
         frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
 
-        #for j in range(len(frameInds)):
-        #    img = video[frameInds[j]]
-        #    cv2.imwrite('../vis/testImgPims_{}_{}.png'.format(j,shotInds[j]), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
@@ -634,16 +537,25 @@ class TestLoader():
         return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName,torch.tensor(frameInds)
 
     def regularlySpacedFrames(self,shotBounds):
+        ''' Select several frame indexs regularly spaced in each shot '''
 
         frameInds = ((np.arange(self.framesPerShot)/self.framesPerShot)[np.newaxis,:]*(shotBounds[:,1]-shotBounds[:,0])[:,np.newaxis]+shotBounds[:,0][:,np.newaxis]).astype(int)
 
         return frameInds
 
-    def middleFrames(self,shotBounds):
-        starts = np.concatenate((shotBounds[:,0],[shotBounds[-1,1]]),axis=0)
-        return (starts[1:]+starts[:-1])//2
-
 def readAudio(audioData,i,fps,fs,audio_len):
+    ''' Select part of an audio track
+    Args:
+    - audioData (array) the full waveform
+    - i (int) the frame index at which the extract should be centered
+    - fps (int): the number of frams per second
+    - audio_len (float): the length of the audio extract, in seconds
+
+    Returns:
+    - fullArray (array): the audio extract
+
+    '''
+
     time = float(i)/float(fps)
     pos = time*fs
     interv = audio_len*fs/2
@@ -654,6 +566,18 @@ def readAudio(audioData,i,fps,fs,audio_len):
     return fullArray
 
 def getGT(dataset,vidName):
+    ''' For one video, returns a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
+
+    This function computes the 0,1 list and save if it does not already exists.
+
+    Args:
+    - dataset (str): the dataset name
+    - vidName (str): the video name. It is the name of the videol file minux the extension.
+    Returns:
+    - gt (array): a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
+
+    '''
+
     if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
@@ -667,6 +591,16 @@ def getGT(dataset,vidName):
     return gt.astype(int)
 
 def framesToShot(scenesBounds,shotBounds):
+    ''' Convert a list of scene bounds expressed with frame index into a list of scene bounds expressed with shot index
+
+    Args:
+    - scenesBounds (array): the scene bounds expressed with frame index
+    - shotBounds (array): the shot bounds expressed with frame index
+
+    Returns:
+    - gt (array): the scene bounds expressed with shot index
+
+    '''
 
     gt = np.zeros(len(shotBounds))
     sceneInd = 0

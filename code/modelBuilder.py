@@ -25,6 +25,18 @@ import vggish_input
 from torch.nn import DataParallel
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
+    ''' Build a visual feature model
+
+    Args:
+    - featModelName (str): the name of the architecture. Can be resnet50, resnet101 or googLeNet
+    - pretrainDataSet (str): the dataset on which the architecture should be pretrained. Can be imageNet, places365 or ADE20K depending on the architecture.\
+            See code below to check on which pretrain dataset each architecture is available
+    - layFeatCut (str): The layer at which to extract the features (ignored if the architecture is not a resnet one.)
+
+    Returns:
+    - featModel (nn.Module): the visual feature extractor
+
+    '''
 
     if featModelName == "resnet50":
 
@@ -78,6 +90,15 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
     return featModel
 
 def buildAudioFeatModel(audioFeatModelName):
+    ''' Build an audio feature model pretrained for speech tasks
+
+    Args:
+    - audioFeatModelName (str): the name of the architecture. Can only be vggish
+
+    Returns:
+    - model (nn.Module): the audio feature extractor
+
+    '''
 
     if audioFeatModelName == "vggish":
         model = vggish.VGG()
@@ -87,203 +108,15 @@ def buildAudioFeatModel(audioFeatModelName):
 
     return model
 
-class DiagBlock():
-
-    def __init__(self,cuda,batchSize,feat,pretrainDataSet,audioFeat):
-
-        self.cuda = cuda
-        self.batchSize = batchSize
-
-        self.featModel = None
-        self.featModelName = feat
-
-        self.audioFeatModel = None
-        self.audioFeatModelName = audioFeat
-
-        self.pretrainDataSet = pretrainDataSet
-
-    def simMat(self,filePathList,foldName,modal="visual"):
-
-        def preprocc_audio(x):
-            x = vggish_input.wavfile_to_examples(x)
-
-            if self.cuda:
-                x = torch.tensor(x).cuda().unsqueeze(0)
-            else:
-                x = torch.tensor(x)
-
-            return x.float()
-
-        def preprocc_visual(x):
-            x = cv2.imread(x)
-            x = resize(x, (299, 299,3), anti_aliasing=True,mode="constant")
-
-            if self.cuda:
-                x = torch.tensor(x).cuda()
-            else:
-                x = torch.tensor(x)
-
-            x = x.permute(2,0,1).float().unsqueeze(0)
-
-            return x
-
-        if modal == "visual":
-            preprocc=preprocc_visual
-            featModBuilder = buildFeatModel
-            kwargs = {'featModelName':self.featModelName,'pretrainDataSet':self.pretrainDataSet}
-        elif modal == "audio":
-            preprocc=preprocc_audio
-            featModBuilder = buildAudioFeatModel
-            kwargs = {'audioFeatModelName':self.audioFeatModelName}
-        else:
-            raise ValueError("Unkown modality : {}".format(modal))
-
-        if not os.path.exists("../results/{}_{}_simMatTEST.csv".format(foldName,modal)):
-
-            featModel = featModBuilder(**kwargs)
-
-            if self.cuda:
-                featModel = featModel.cuda()
-
-            featModel.eval()
-
-            print("Computing features")
-
-            #The modulo term increases the total number of batch by one in case
-            #One last small batch is required
-            nbBatch = len(filePathList)//self.batchSize + (len(filePathList) % self.batchSize != 0)
-            feat = None
-            for i in range(nbBatch):
-
-                indMax = min((i+1)*self.batchSize,len(filePathList))
-
-                tensorBatch = list(map(preprocc,filePathList[i*self.batchSize:indMax]))
-
-                tensorBatch = torch.cat(tensorBatch)
-
-                featBatch = featModel(tensorBatch).detach()
-
-                if feat is None:
-                    feat = featBatch
-                else:
-                    feat = torch.cat([feat,featBatch])
-
-            print("Computing the similarity matrix")
-
-            featCol = feat.unsqueeze(1)
-            featRow = feat.unsqueeze(0)
-
-            featCol = featCol.expand(feat.size(0),feat.size(0),feat.size(1))
-            featRow = featRow.expand(feat.size(0),feat.size(0),feat.size(1))
-
-            simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
-
-            simMatrix_np = simMatrix.detach().cpu().numpy()
-            np.savetxt("../results/{}_{}_simMat.csv".format(foldName,modal),simMatrix_np)
-
-            plt.imshow(simMatrix_np.astype(int), cmap='gray', interpolation='nearest')
-            plt.savefig("../vis/{}_{}_simMat.png".format(foldName,modal))
-
-        else:
-            print("Reading similarity matrix")
-
-            simMatrix = torch.tensor(np.genfromtxt("../results/{}_{}_simMat.csv".format(foldName,modal))).float()
-
-            if self.cuda:
-                simMatrix = simMatrix.cuda()
-
-        return simMatrix
-
-    def getPossiblePValues(self,N,K):
-        pMax = N*N
-
-        if not os.path.exists("../results/possibP_N{}_K{}.csv".format(N,K)):
-
-            print("Computing possible values of p")
-
-            #Indicates which value of p are possible
-            B = torch.zeros((N,K,pMax)).byte()
-            lineEnum = torch.arange(N-1,-1,-1).unsqueeze(1).expand(N,pMax)
-            colEnum = torch.arange(N*N-1,-1,-1).unsqueeze(0).expand(N,pMax)
-
-            tens1 = torch.arange(N).unsqueeze(1).expand(N,pMax)
-            tens2 = torch.pow(torch.arange(pMax),2).unsqueeze(0).expand(N,pMax)
-
-            for n in range(B.size(0)):
-                for p in range(B.size(2)):
-                    if n*n == p:
-                        B[n,0,p] = 1
-
-            for k in range(1,K):
-
-                precMat = B[:,k-1,:]
-                print(k)
-
-                for n in range(1,N+1):
-                    print("\t",n)
-
-                    for p in range(1,pMax+1):
-
-                        l=1
-                        while n-l >= 0 and p-l*l >= 0 and not B[n-1,k,p-1]:
-                            B[n-1,k,p-1] = precMat[n-l,p-l*l]
-                            l += 1
-
-            possibleValues = torch.nonzero(B)
-
-            np.savetxt("../results/possibP_N{}_K{}.csv".format(N,K),possibleValues.detach().cpu().numpy())
-
-        else:
-
-            possibleValues = torch.tensor(np.genfromtxt("../results/possibP_N{}_K{}.csv".format(N,K)))
-            print("Reading possible values of p")
-
-        print(len(possibleValues),"values possible")
-
-        return possibleValues.long()
-
-    def countScenes(self,simMatrix):
-
-        print("Number of scenes : ",end="")
-
-        s = np.linalg.svd(simMatrix,compute_uv=False)
-        s = np.log(s[np.where(s > 1)])
-
-        H = np.array([len(s)-1,s[0]-s[len(s)-1]])
-        I = np.concatenate((s[:,np.newaxis],np.arange(len(s))[:,np.newaxis]),axis=1)
-
-        K = np.argmin((I*H).sum(axis=1))+1
-
-        print(K)
-        return K
-
-    def detectDiagBlock(self,imagePathList,audioPathList,exp_id,model_id):
-
-        foldName = os.path.dirname(imagePathList[0]).split("/")[-2]
-        simMatrix = self.simMat(imagePathList,foldName,modal="visual")
-
-        if not audioPathList is None:
-            simMatrix_audio =self.simMat(audioPathList,foldName,modal="audio")
-
-            simMatrix = ((simMatrix/simMatrix.max())+(simMatrix_audio/simMatrix_audio.max()))/2
-
-        np.savetxt("../results/{}_{}_simMat.csv".format(foldName,model_id),simMatrix.detach().cpu().numpy())
-
-        N = int(len(simMatrix))
-        pMax = N*N
-
-        print("Number of shots : ",N)
-
-        simMatrix = simMatrix[:N,:N]
-
-        K = self.countScenes(simMatrix.cpu().numpy())
-
-        if self.cuda:
-            subprocess.run(["./baseline/build/baseline", "../results/{}_{}_simMat.csv".format(foldName,model_id),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cuda"])
-        else:
-            subprocess.run(["./baseline/build/baseline", "../results/{}_{}_simMat.csv".format(foldName,model_id),"../results/{}/{}_basecuts.csv".format(exp_id,foldName),str(N),str(K),"cpu"])
-
 class simpleAttention(nn.Module):
+    ''' A frame attention module that computes a scalar weight for each frame in a batch
+
+    Args:
+    - nbFeat (int): the number of feature in the vector representing a frame
+    - frameAttRepSize (int): the size of the hidden state of the frame attention
+
+    '''
+
     def __init__(self,nbFeat,frameAttRepSize):
 
         super(simpleAttention,self).__init__()
@@ -297,6 +130,18 @@ class simpleAttention(nn.Module):
         return attWeights
 
 class LSTM_sceneDet(nn.Module):
+    ''' A LSTM temporal model
+
+    This models the temporal dependencies between shot representations. It processes the representations one after another.
+
+    Args:
+    - nbFeat (int): the number of feature in the vector representing a frame
+    - hiddenSize (int): the size of the hidden state
+    - layerNb (int): the number of layers. Each layer is one LSTM stacked upon the preceding LSTMs.
+    - dropout (float): the dropout amount in the layers of the LSTM, except the last one
+    - bidirect (bool): a boolean to indicate if the LSTM is bi-bidirectional or not
+
+    '''
 
     def __init__(self,nbFeat,hiddenSize,layerNb,dropout,bidirect):
 
@@ -308,6 +153,18 @@ class LSTM_sceneDet(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self,x,h,c):
+        ''' The forward pass into the LSTM
+
+        Args:
+        - x (torch.tensor): the feature batch
+        - h (torch.tensor): the hidden state initial value. Can be set to None to initialize it with zeros
+        - c (torch.tensor): the cell state initial value. Can be set to None to initialize it with zeros
+
+        Returns:
+        - x (torch.tensor): the scene change score for each shot of each batch
+        - h,c (tuple): the hidden state and cell state at the end of processing the sequence
+
+        '''
 
         if not h is None:
             x,(h,c) = self.rnn(x,(h,c))
@@ -323,6 +180,21 @@ class LSTM_sceneDet(nn.Module):
         return x,(h,c)
 
 class CNN_sceneDet(nn.Module):
+    ''' A CNN temporal model
+
+    This models the temporal dependencies between shot reprensentations. It process all the representations at once.
+    This is based on a resnet architecture
+
+    Args:
+    - layFeatCut (int): the layer at which the feature from the resnet should be extracted
+    - modelType (str): the name of the resnet architecture to use
+    - chan (int): the number of channel of the first layer of the architecture. The channel numbers in the following layers are based on this value also
+    - pretrained (bool): indicates if the resnet has to be pretrained on imagenet or not.
+    - pool (str): the way the feature should be pooled at the end of the processing. Can be 'mean' to simply do an average pooling or 'linear' to use a fully connected layer
+    - multiGPU (bool): indicates if the computation should be done on several gpus
+    - dilation (int): the dilation of the convolution
+
+    '''
 
     def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1):
 
@@ -379,6 +251,21 @@ class CNN_sceneDet(nn.Module):
         return x
 
 class SceneDet(nn.Module):
+    ''' This module combines a feature extractor to represent each shot and a temporal model to compute the scene change score for each shot
+
+    Args:
+    - temp_model (str): the architecture of the temporal model. Can be 'RNN', 'resnet50' or 'resnet101'. If a resnet is chosen the temporal model will be a CNN
+    - featModelName,pretrainDataSetFeat,layFeatCut : the argument to build the visual model (see buildFeatModel())
+    - audioFeatModelName (str): the audio architecture (see buildAudioFeatModel()). Should be set to 'None' to not use an audio model
+    - hiddenSize,layerNb,dropout,bidirect : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
+    - cuda (bool): whether or not the computation should be done on gpu
+    - framesPerShot (int): the number of frame to use to represent a shot
+    - frameAttRepSize (int): the size of the frame attention (see simpleAttention module)
+    - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
+    - chanTempMod, pretrTempMod, poolTempMod, dilTempMod: respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
+        model is a resnet.
+
+    '''
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
                         chanTempMod,pretrTempMod,poolTempMod,dilTempMod):
@@ -419,23 +306,30 @@ class SceneDet(nn.Module):
         self.nb_gpus = torch.cuda.device_count()
 
     def forward(self,x,audio,h=None,c=None):
+        ''' The forward pass of the scene change model
 
-        #print("Beg : ",printAlloc())
-        #subprocess.call("nvidia-smi >> nvidia.txt", shell=True)
-        #print(x.size())
+        Args:
+        - x (torch.tensor): the visual data tensor
+        - audio (torch.tensor): the audio data tensor. Can be None if no audio model is used
+        - h,c (torch.tensor): the hidden state  and cell initial value. Can be set to None to initialize it with zeros and is ignored when using a resnet as temporal model
+
+        Returns:
+        - the scene change score if a resnet is used as temporal model
+        - the scene change score along with the final hidden state and cell state if an LSTM is used as temporal model.
+        '''
+
+        x = self.computeFeat(x,audio,h,c)
+
+        return self.computeScore(x,h,c)
+
+    def computeFeat(self,x,audio,h=None,c=None):
+
         origBatchSize = x.size(0)
         origSeqLength = x.size(1)//self.framesPerShot
 
-        #print(x.size())
-
-        #print(x.size())
         x = x.contiguous().view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
-        #print(x.size())
-        #x = x.permute(0,3,1,2)
-        #print(x.size())
-        x = self.featModel(x)
 
-        #print("After cnn : ",printAlloc())
+        x = self.featModel(x)
 
         if not self.audioFeatModel is None:
             audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
@@ -445,14 +339,14 @@ class SceneDet(nn.Module):
 
         attWeights = self.frameAtt(x)
 
-        #print("Forward",h is None)
-        #print(x.size(),attWeights.size())
-
         #Unflattening
         x = x.view(origBatchSize,origSeqLength,self.framesPerShot,-1)
         attWeights = attWeights.view(origBatchSize,origSeqLength,self.framesPerShot,1)
-        #print(x.size())
+
         x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
+        return x
+
+    def computeScore(self,x,h=None,c=None):
 
         if self.temp_model == "RNN":
             return self.tempModel(x,h,c)
