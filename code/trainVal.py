@@ -19,8 +19,9 @@ import torch.backends.cudnn as cudnn
 
 import subprocess
 from sklearn.metrics import roc_auc_score
-torch.backends.cudnn.benchmark = True
-
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.enabled = False
+import time
 def softTarget(predBatch,targetBatch,width):
     ''' Convolve the target with a triangular window to make it smoother
 
@@ -147,15 +148,6 @@ def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
 
     writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batch_idx+1,writer,epoch,mode,args.model_id,args.exp_id)
 
-def compDistMat(feat):
-
-    featCol = feat.unsqueeze(1)
-    featRow = feat.unsqueeze(0)
-
-    featCol = featCol.expand(feat.size(0),feat.size(0),feat.size(1))
-    featRow = featRow.expand(feat.size(0),feat.size(0),feat.size(1))
-
-    simMatrix = torch.pow(featCol-featRow,2).sum(dim=2)
 def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
     ''' Train a model during one epoch
 
@@ -266,15 +258,14 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
     outDict = {}
     frameIndDict = {}
-    currVidName = "None"
+    precVidName = "None"
     videoBegining = True
     validBatch = 0
     nbVideos = 0
 
     for batch_idx, (data, audio,target,vidName,frameInds) in enumerate(loader):
 
-        newVideo = (vidName != currVidName) or videoBegining
-        currVidName = vidName
+        newVideo = (vidName != precVidName) or videoBegining
 
         if (batch_idx % log_interval == 0):
             print("\t",loader.sumL+1,"/",loader.nbShots)
@@ -286,7 +277,8 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
         #print(data.size())
 
         if args.temp_model.find("resnet") != -1:
-            output = model(data,audio).data
+            output = model.computeFeat(data,audio).data
+
         else:
             if newVideo:
                 output,(h,c) = model(data,audio)
@@ -295,7 +287,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
             output,h,c = output.data,h.data,c.data
 
-        updateOutDict(outDict,output,frameIndDict,frameInds,vidName)
+        updateFrameDict(frameIndDict,frameInds,vidName)
 
         #loss.backward()
         #optim.zero_grad()
@@ -305,6 +297,34 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
         #Metrics
         if newVideo and not videoBegining:
+
+            def computeScore(model,allFeats,valLTemp):
+
+                allOutput = None
+                splitSizes = [valLTemp for _ in range(allFeats.size(1)//valLTemp)]
+
+                if allFeats.size(1)%valLTemp > 0:
+                    splitSizes.append(allFeats.size(1)%valLTemp)
+
+                chunkList = torch.split(allFeats,split_size_or_sections=splitSizes,dim=1)
+
+                for i in range(len(chunkList)):
+
+                    scores = model.computeScore(chunkList[i])
+
+                    if allOutput is None:
+                        allOutput = model.computeScore(chunkList[i]).data
+                    else:
+                        allOutput = torch.cat((allOutput,model.computeScore(chunkList[i]).data),dim=1)
+                return allOutput
+
+            print("Computing scores")
+            if args.temp_model.find("resnet") != -1:
+                allOutput = computeScore(model,allOutput,args.val_l_temp)
+            print("Finished computing scores")
+
+            outDict[precVidName] = allOutput
+
             cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
             total_cover += cov
             total_overflow += overflow
@@ -334,11 +354,13 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
             allTarget = torch.cat((allTarget,target),dim=1)
             allOutput = torch.cat((allOutput,output),dim=1)
 
+        precVidName = vidName
+
     for key in outDict.keys():
-        fullArr = torch.cat((frameIndDict[key].float(),outDict[key].unsqueeze(1)),dim=1)
+        fullArr = torch.cat((frameIndDict[key].float(),outDict[key].permute(1,0)),dim=1)
         np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),fullArr.cpu().detach().numpy())
 
-    metricDict = writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"vali",args.model_id,args.exp_id,nbVideos=nbVideos)
+    metricDict = writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"val",args.model_id,args.exp_id,nbVideos=nbVideos)
 
     metricVal = metricDict[metricEarlyStop]
 
@@ -351,9 +373,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
     else:
         betterFound = False
 
-
     if betterFound:
-        print("Better {} found : {}".format(metricEarlyStop,metricLastVal))
         paths = glob.glob("../models/{}/model{}_best_epoch*".format(args.exp_id,args.model_id, epoch))
         if len(paths) > 1:
             raise ValueError("More than one best model found for exp {} and model {}".format(exp_id,model_id))
@@ -366,7 +386,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
     else:
         return metricLastVal
 
-def updateOutDict(outDict,output,frameIndDict,frameInds,vidName):
+def updateFrameDict(frameIndDict,frameInds,vidName):
     ''' Store the prediction of a model in a dictionnary with one entry per movie
 
     Args:
@@ -377,15 +397,12 @@ def updateOutDict(outDict,output,frameIndDict,frameInds,vidName):
 
     '''
 
-    if vidName in outDict.keys():
-        outDict[vidName] = torch.cat((output[0,:],outDict[vidName]),dim=0)
-
-        reshFrInds = frameInds.view(len(output[0,:]),-1).clone()
+    if vidName in frameIndDict.keys():
+        reshFrInds = frameInds.view(len(frameInds),-1).clone()
         frameIndDict[vidName] = torch.cat((frameIndDict[vidName],reshFrInds),dim=0)
 
     else:
-        outDict[vidName] = output[0,:]
-        frameIndDict[vidName] = frameInds.view(len(output[0,:]),-1).clone()
+        frameIndDict[vidName] = frameInds.view(len(frameInds),-1).clone()
 
 def getWeights(target,classWeight):
     '''
@@ -442,9 +459,29 @@ def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,wr
         print(header,file=text_file)
         print("{},{},{},{},{}".format(epoch,total_loss,accuracy,total_posDist,total_negDist),file=text_file)
 
-def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,mode,model_id,exp_id,nbVideos=None):
+def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,batchNb,writer,epoch,mode,model_id,exp_id,nbVideos=None):
+    ''' Write the metric computed during an evaluation in a tf writer and in a csv file
 
-    sampleNb = validBatch if mode == "train" else nbVideos
+    Args:
+    - total_loss (float): the loss summed over every batch. It will be divided by the number of batches to obtain the mean loss per example
+    - total_cover (float): the coverage summed over every batch. Same as total_loss
+    - total_overflow (float): the overflow summed over every batch. Same as total_loss
+    - total_auc (float): the area under the ROC curve summed over every batch. Same as total_loss
+    - total_iou (float): the IoU summed over every batch. Same as total_loss
+    - batchNb (int): the total number of batches during the epoch
+    - writer (tensorboardX.SummaryWriter): the writer to use to write the metrics to tensorboardX
+    - mode (str): either \'train\' or \'val\' to indicate if the epoch was a training epoch or a validation epoch
+    - model_id (str): the id of the model
+    - exp_id (str): the experience id
+    - nbVideos (int): During validation the metrics are computed over whole videos and not batches, therefore the number of videos should be indicated \
+        with this argument during validation
+
+    Returns:
+    - metricDict (dict): a dictionnary containing the metrics value
+
+    '''
+
+    sampleNb = batchNb if mode == "train" else nbVideos
     total_loss /= sampleNb
     total_iou /= sampleNb
     total_cover /= sampleNb
@@ -551,7 +588,17 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
 
     return startEpoch
 
-def evalAllImages(exp_id,model_id,model,audioModel,dataset_test,testLoader,cuda,log_interval):
+def evalAllImages(exp_id,model_id,model,audioModel,testLoader,cuda,log_interval):
+    '''
+    Pass all the images and/or the sound extracts of a loader in a feature model and save the feature vector in one csv for each image.
+    Args:
+    - exp_id (str): The experience id
+    - model (nn.Module): the model to process the images
+    - audioModel (nn.Module): the model to process the sound extracts
+    - testLoader (load_data.TestLoader): the image and/or sound loader
+    - cuda (bool): True is the computation has to be done on cuda
+    - log_interval (int): the number of batches to wait before logging progression
+    '''
 
     for batch_idx, (data,audio, _,vidName,frameInds) in enumerate(testLoader):
 
@@ -664,7 +711,7 @@ def main(argv=None):
         else:
             audioFeatModel = None
 
-        evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,args.dataset_test,testLoader,args.cuda,args.log_interval)
+        evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,testLoader,args.cuda,args.log_interval)
 
     else:
 
@@ -785,7 +832,7 @@ def main(argv=None):
 
             kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
             kwargsTr["model"],kwargsVal["model"] = net,net
-            trainFunc(**kwargsTr)
+            #trainFunc(**kwargsTr)
 
             if not args.train_siam:
                 kwargsVal["metricLastVal"] = metricLastVal

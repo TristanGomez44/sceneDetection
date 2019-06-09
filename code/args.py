@@ -148,7 +148,10 @@ class ArgReader():
                             help='The maximum length of a training sequence')
 
         self.parser.add_argument('--val_l', type=int,metavar='LMAX',
-                            help='Length of sequences for validation')
+                            help='Length of sequences for validation.')
+
+        self.parser.add_argument('--val_l_temp', type=int,metavar='LMAX',
+                            help='Length of sequences for computation of scores when using a CNN temp model.')
 
         self.parser.add_argument('--chan_temp_mod', type=int,metavar='LMAX',
                             help='The channel number of the temporal model, if it is a CNN')
