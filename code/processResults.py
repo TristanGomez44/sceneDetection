@@ -17,6 +17,19 @@ import subprocess
 from skimage.transform import resize
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
+    '''
+    Plot the representations of the shots of a video in a 2D space using t-sne algorithm. Each point represents a shot,
+    its color indicates from which scene it comes from
+
+    Args:
+    - dataset (str): the video dataset
+    - exp_id (str): the experience name
+    - model_id (str): the model name
+    - seed (int): the seed to initialise the t-sne algorithm
+    - framesPerShots (int): the number of frames per shot
+    - nb_scenes (int): the number of scenes to plot
+
+    '''
 
     repFile = glob.glob("../results/{}/")
 
@@ -71,6 +84,15 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
             print("\tFeature for video {} does not exist".format(videoName))
 
 def compGT(exp_id,metric,thres):
+    ''' Evaluate all the models of an experiment on all the video parsed by this model
+
+    Args:
+    - exp_id (str): the experience name
+    - metric (str): can only be 'IoU' for now
+    - thres (float): the score threshold to determine which score is sufficient to say \
+                    that there is a scene change
+
+    '''
 
     modelIniPaths = glob.glob("../models/{}/*.ini".format(exp_id))
     metricFunc = globals()[metric]
@@ -101,43 +123,16 @@ def compGT(exp_id,metric,thres):
     with open("../results/{}/{}.csv".format(exp_id,metric),"w") as csvFile:
         print(csv,file=csvFile)
 
-def comptGT_trueBaseline(truebaseFold,exp_id,dataset,resPath,frame):
-
-    resCSV = "video,coverage,overflow,F-score,IoU\n"
-
-    for trueBaseCutsPath in sorted(glob.glob(truebaseFold+"/*.csv")) :
-
-        truebasecuts = np.genfromtxt(trueBaseCutsPath)
-
-        if len(truebasecuts.shape) < 2:
-            truebasecuts = [truebasecuts]
-
-        fileName = os.path.basename(trueBaseCutsPath)
-        if frame:
-            pos = fileName.find("_frames_truebasecuts.csv")
-        else:
-            pos = fileName.find("_truebasecuts.csv")
-
-        vidName = fileName[:pos]
-
-        if frame:
-            gt = np.genfromtxt("../data/{}/annotations/{}_frames_scenes.csv".format(dataset,vidName))
-        else:
-            gt = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
-
-        cov = coverage(gt,truebasecuts)
-        over = overflow(gt,truebasecuts)
-        f_score = 2*cov*(1-over)/(cov+(1-over))
-
-        iou = IoU(gt,truebasecuts)
-
-        resCSV +=vidName+","+str(cov)+","+str(over)+","+str(f_score)+","+str(iou)+"\n"
-        print(vidName+","+str(cov)+","+str(over)+","+str(f_score)+","+str(iou))
-
-    with open(resPath,"w") as text_file:
-        print(resCSV,file=text_file)
-
 def binaryToMetrics(pred,target):
+    ''' Computes metrics of a predicted scene segmentation using a gt and a prediction encoded in binary format
+
+    Args:
+    - pred (list): the predicted scene segmentation. It is a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
+                    the shot is the first shot of a new scene.
+    - target (list): the ground truth scene segmentation. Formated the same way as pred.
+
+
+    '''
 
     predBounds = []
     targBounds = []
@@ -168,6 +163,13 @@ def binaryToMetrics(pred,target):
     return cov_val,overflow_val,iou_val
 
 def binaryToSceneBounds(scenesBinary):
+    ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
+                into a list of intervals i.e. a scene boundary array relative to shot index
+    Args:
+    - scenesBinary (list): a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
+                    the shot is the first shot of a new scene. A 0 indicates otherwise.
+
+     '''
 
     sceneBounds = []
     currSceneStart=0
@@ -183,7 +185,7 @@ def binaryToSceneBounds(scenesBinary):
     return sceneBounds
 
 def frame_to_shots(dataset,vidName,scenesF):
-    ''' Computes scene boundaries file with shot index instead of frame index '''
+    ''' Computes scene boundaries relative with shot index instead of frame index '''
 
     shotsF = xmlToArray(dataset,vidName)
 
@@ -212,13 +214,9 @@ def frame_to_shots(dataset,vidName,scenesF):
     return scenesS
 
 def shots_to_frames(dataset,vidName,scenesS):
-
-    ''' Computes scene boundaries file with shot index instead of frame index '''
+    ''' Computes scene boundaries file with frame index instead of shot index '''
 
     shotsF = xmlToArray(dataset,vidName)
-
-    print(scenesS)
-    print(shotsF.shape)
 
     scenes_startF = shotsF[:,0][scenesS[:,0].astype(int)]
     scenes_endF = shotsF[:,1][scenesS[:,1].astype(int)]
@@ -228,11 +226,13 @@ def shots_to_frames(dataset,vidName,scenesS):
 
     return scenesF
 
-def xmlToArray(dataset,vidName):
-
-    return xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
-
 def xmlToArray(xmlPath):
+    ''' Read the shot segmentation for a video
+
+    If the shot segmentation does not exist in .xml at the path indicated, \
+    this function look for the segmentation in csv file, in the same folder. 
+
+     '''
 
     if os.path.exists(xmlPath):
         #Getting the shot bounds with frame number
@@ -250,26 +250,17 @@ def xmlToArray(xmlPath):
     else:
         return np.genfromtxt(xmlPath.replace(".xml",".csv"))
 
-def removeHolesScenes(scenesS):
-    ''' Some scene boundaries file can be inconsistent : a scene can finish at frame/shot x
-    and the next scene can start at frame/shot y>x+1, leading to a few frame/shot belonging to no scene.
-    This function solves this by putting the scene cut in the middle of the hole. '''
-
-    holesDetected = False
-    for i in range(len(scenesS)-1):
-
-        if scenesS[i,1] + 1 < scenesS[i+1,0]:
-
-            middleInd = (scenesS[i,1] + scenesS[i+1,0])//2
-
-            scenesS[i,1] = middleInd
-            scenesS[i+1,0] = middleInd+1
-
-            holesDetected = True
-
-    return scenesS
-
 def coverage(gt,pred):
+    ''' Computes the coverage of a scene segmentation
+
+    Args:
+    - gt (array): the ground truth segmentation. It is a list of gr interval (each interval is a tuple made of the first and the last shot index of the scene)
+    - pred (array): the predicted segmentation. Same format as gt
+
+    Returns:
+    - the mean coverage of the predicted scene segmentation
+
+    '''
 
     cov_gt_array = np.zeros(len(gt))
     for i,scene in enumerate(gt):
@@ -286,10 +277,21 @@ def coverage(gt,pred):
     return cov_gt_array.mean()
 
 def leng(scene):
+    ''' The number of shot in an interval, i.e. a scene '''
 
     return scene[1]-scene[0]+1
 
 def overflow(gt,pred):
+    ''' Computes the overflow of a scene segmentation
+
+    Args:
+    - gt (array): the ground truth segmentation. It is a list of gr interval (each interval is a tuple made of the first and the last shot index of the scene)
+    - pred (array): the predicted segmentation. Same format as gt
+
+    Returns:
+    - the mean overflow of the predicted scene segmentation
+
+    '''
 
     ov_gt_array = np.zeros(len(gt))
     for i,scene in enumerate(gt):
@@ -327,10 +329,22 @@ def overflow(gt,pred):
     return ov_gt_array.mean()
 
 def IoU(gt,pred):
+    ''' Computes the Intersection over Union of a scene segmentation
 
+    Args:
+    - gt (array): the ground truth segmentation. It is a list of gr interval (each interval is a tuple made of the first and the last shot index of the scene)
+    - pred (array): the predicted segmentation. Same format as gt
+
+    Returns:
+    - the IoU of the predicted scene segmentation with the ground-truth
+
+    '''
+
+    #The IoU is first computed relative to the ground truth and then relative to the prediction
     return 0.5*(IoU_oneRef(gt,pred)+IoU_oneRef(pred,gt))
 
 def IoU_oneRef(sceneCuts1,sceneCuts2):
+    ''' Compute the IoU of a segmentation relative another '''
 
     #Will store the IoU of every scene from sceneCuts1 with every scene from sceneCuts2
     iou = np.zeros((len(sceneCuts1),len(sceneCuts2),2))
@@ -349,10 +363,12 @@ def IoU_oneRef(sceneCuts1,sceneCuts2):
     return iou_mean
 
 def union(a,b):
+    ''' The union between two intervals '''
 
     return b[1]-b[0]+1+a[1]-a[0]+1-inter(a,b)
 
 def inter(a,b):
+    ''' The intersection between two intervals '''
 
     if b[0] > a[1] or a[0] > b[1]:
         return 0
@@ -360,6 +376,7 @@ def inter(a,b):
         return min(a[1],b[1])-max(a[0],b[0])+1
 
 def minus(a,b):
+    ''' the interval a minus the interval b '''
 
     totalLen = 0
     bVal = np.arange(int(b[0]),int(b[1])+1)
@@ -371,6 +388,17 @@ def minus(a,b):
     return totalLen
 
 def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
+    ''' Plot the scene change score on the image of a video
+
+    Args:
+    - dataset (str): the video dataset
+    - exp_id (str): the experience name
+    - resFilePath (str): the path to a csv file containing the score of each shot of a video. Such a file is produced by using the trainVal.py script with \
+                        the --comp_feat argument
+    - nbScoToPlot (int): the number of score to plot at the same time on the image. The score plot on the center is the score of the current shot, the scores \
+                        plot on the left and on the right correspond respectively to the scores of the prededing and following shots.
+
+    '''
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
@@ -483,6 +511,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     videoRes.release()
 
 def getVideoFPS(videoPath,exp_id=None):
+    ''' Get the number of frame per sencond of a video. Saves it in a text file so it does not have to be computed again '''
 
     if not os.path.exists("info_{}_{}.txt".format(os.path.basename(videoPath),exp_id)):
         subprocess.call("ffmpeg -i {} 2>info_{}_{}.txt".format(videoPath,os.path.basename(videoPath),exp_id),shell=True)
@@ -502,72 +531,6 @@ def getVideoFPS(videoPath,exp_id=None):
         raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
 
     return fps
-
-def scoreVis_frames(dataset,resFilePath):
-
-    resFile = np.genfromtxt(resFilePath)
-
-    frameInds = resFile[:,:-1]
-    scores = resFile[:,-1]
-
-    videoName = os.path.splitext(resFilePath)[0].split("_")[2:]
-    videoName = "_".join(videoName)
-
-    videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
-
-    video = pims.Video(videoPath)
-
-    nbCols = int(np.sqrt(len(resFile[0])-1))+1
-    nbRows = nbCols
-
-    exp_id = os.path.dirname(resFilePath).split("/")[-1]
-    model_id = os.path.basename(os.path.splitext(resFilePath)[0].split("_")[0])
-
-    for i,score in enumerate(scores):
-
-        imgList = []
-
-        for frameInd in frameInds[i]:
-
-            frame = video[frameInd]
-            frame = frame.reshape(frame.shape[1],frame.shape[0],3)
-            imgList.append(frame)
-
-        nbImageAdded = 0
-        bigImage = None
-        for j in range(nbRows):
-
-            if nbImageAdded<len(imgList):
-                row = imgList[nbImageAdded]
-                nbImageAdded += 1
-
-                for k in range(nbCols):
-                    if nbImageAdded<len(imgList):
-                        row = np.concatenate((row,imgList[nbImageAdded]),axis=1)
-                        nbImageAdded += 1
-
-                if j==0:
-                    bigImage = row
-                else:
-                    bigImage = np.concatenate((bigImage,row),axis=0)
-
-
-        heigth = 60
-        width = heigth//2
-        offX = 10
-        offY = offX
-
-        cv2.rectangle(bigImage, (offX,offY), (offX+int(width*2),offY+heigth), (0,0,0),thickness=-1)
-        cv2.rectangle(bigImage, (offX,offY+int(heigth*score)), (offX+width,offY+heigth), (255,255,255),thickness=-1)
-        cv2.rectangle(bigImage, (offX,offY), (offX+width,offY+heigth), (255,0,0),thickness=2)
-
-        for j in range(6):
-            cv2.line(bigImage,(offX+width-5,offY+heigth*j//5),(offX+width+5,offY+heigth*j//5),(255,0,0),2)
-            cv2.putText(bigImage,str(10*round((5-j)*2)),(offX+width+10,offY+int(j*0.2*heigth)), cv2.FONT_HERSHEY_SIMPLEX, 0.4,(255,255,255),2,cv2.LINE_AA)
-
-
-        bigImage = Image.fromarray(bigImage)
-        bigImage.save("../vis/{}/{}_{}_{}.png".format(exp_id,model_id,videoName,frameInds[i,0]))
 
 def main(argv=None):
 
@@ -590,7 +553,6 @@ def main(argv=None):
     argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. Also plots the representation of a video side by side to make an image. \
                                     The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should be set.')
 
-    argreader.parser.add_argument('--score_vis_frames',type=str,help='To plot the image used to make decisions and their respective score. Requires the --dataset_test argument to be set. The value is a path to a result file.')
     argreader.parser.add_argument('--score_vis_video',type=str,help='To plot the scene change score on the video itself. Requires the --dataset_test and --exp_id arguments to be set. The value is a path to a result file.')
 
     argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
@@ -607,8 +569,7 @@ def main(argv=None):
         comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed,args.frames_per_shot)
-    if args.score_vis_frames:
-        scoreVis_frames(args.dataset_test,args.score_vis_frames)
+
     if args.score_vis_video:
         scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
     if args.plot_cat_repr:

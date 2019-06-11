@@ -337,6 +337,8 @@ class SceneDet(nn.Module):
 
             x = torch.cat((x,audio),dim=-1)
 
+        print("Just before frame attention",x.size())
+        sys.exit(0)
         attWeights = self.frameAtt(x)
 
         #Unflattening
