@@ -92,7 +92,7 @@ Once the video are downloaded, put them in a folder called 'OVSD' in the 'data' 
 
 The script you have to use are the following :
 
-- trainVal.py :
+#### The trainVal.py script :
 
 If you want to train a model called 'testModel' in an experiment called 'testExperience' during 30 epochs with the other parameters left with their default value, simply type :
 
@@ -102,7 +102,22 @@ python trainVal.py -c model.config --exp_id testExperience --model_id testModel 
 
 The argument -c model.config allows the script to read the config file model.config which contains default value for all the arguments. All the arguments are detailed in the script args.py
 
-- processResults.py : contains functions to compute metrics and visualise the results of training. To plot the scores that a model produced on the video, on the video itself.
+If you want to train a siamese network to differentiate image coming from different scenes, type :
+
+```
+python trainVal.py -c model.config --exp_id siamese --model_id siam1 --train_siam
+```
+
+To visualise the metrics evolution during the training, you can use tensorboardX :
+
+```
+tensorboad --logdir=../results/expName
+```
+
+Where 'expName' is the name of the experiment. You should then be able to open your navigator and go to the adress indicated.
+
+#### The processResults.py script :
+This contains functions to compute metrics and visualise the results of training. To plot the scores that a model produced on the video, on the video itself.
 
 ```
  python processResults.py -c model.config --score_vis_video ../results/keepLearning3/moreLayers_epoch99_Big_fish.csv --exp_id keepLearning3 --dataset_test Holly2
@@ -119,6 +134,22 @@ python processResults.py -c model.config --exp_id testExperience --model_id test
 ```
 
 Here, the videos from the first half of the dataset testDataset will be processed.
+
+
+## Reproduce the results :
+
+Here, are the scripts to train the models with the different ideas I have proposed :
+
+```
+python trainVal.py -c model.config --exp_id improvements  --model_id baseline        --epochs 100
+python trainVal.py -c model.config --exp_id improvements  --model_id tempCnn         --epochs 100 --batch_size 4 --temp_model resnet50 --feat resnet50
+python trainVal.py -c model.config --exp_id improvements  --model_id longerSeq       --epochs 100 --l_min 55 --l_max 65
+python trainVal.py -c model.config --exp_id improvements  --model_id softLoss        --epochs 60  --batch_size 4 --soft_loss True --soft_loss_width 4
+python trainVal.py -c model.config --exp_id improvements  --model_id softLossAnneal  --epochs 100 --batch_size 4 --soft_loss True --soft_loss_width 10,9,8,7,6,5,4,3,2,1
+python trainVal.py -c model.config --exp_id improvements  --model_id FrameAtt        --epochs 100 --batch_size 1 --frames_per_shot 4
+python trainVal.py -c model.config --exp_id improvements  --model_id VisualAndAudio  --epochs 100 --batch_size 1  --temp_model resnet50 --feat resnet50 --feat_audio vggish
+
+```
 
 
 ### Other scripts
