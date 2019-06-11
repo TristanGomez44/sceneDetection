@@ -19,8 +19,8 @@ import torch.backends.cudnn as cudnn
 
 import subprocess
 from sklearn.metrics import roc_auc_score
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.enabled = True
 import time
 def softTarget(predBatch,targetBatch,width):
     ''' Convolve the target with a triangular window to make it smoother
@@ -318,10 +318,8 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
                         allOutput = torch.cat((allOutput,model.computeScore(chunkList[i]).data),dim=1)
                 return allOutput
 
-            print("Computing scores")
             if args.temp_model.find("resnet") != -1:
                 allOutput = computeScore(model,allOutput,args.val_l_temp)
-            print("Finished computing scores")
 
             outDict[precVidName] = allOutput
 
@@ -644,7 +642,8 @@ def main(argv=None):
     argreader.parser.add_argument('--baseline', type=int,nargs=2, metavar='N',help='To run the baseline on every video of the dataset. The --dataset argument must\
                                                                         also be used. The values of the argument are the index of the first and the last video to process.')
 
-    argreader.parser.add_argument('--comp_feat', action='store_true',help='To compute and write in a file the features of all images in the test set')
+    argreader.parser.add_argument('--comp_feat', action='store_true',help='To compute and write in a file the features of all images in the test set. All the arguments used to \
+                                    build the model and the test data loader should be set.')
     argreader.parser.add_argument('--train_siam', action='store_true',help='To train a siamese network instead of a CNN-RNN')
 
     #Reading the comand line arg
@@ -832,7 +831,7 @@ def main(argv=None):
 
             kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
             kwargsTr["model"],kwargsVal["model"] = net,net
-            #trainFunc(**kwargsTr)
+            trainFunc(**kwargsTr)
 
             if not args.train_siam:
                 kwargsVal["metricLastVal"] = metricLastVal
