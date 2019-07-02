@@ -109,6 +109,14 @@ class ArgReader():
         self.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
                             help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
 
+        self.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
+                            help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
+
+        self.parser.add_argument('--hm_prop', type=float, metavar='N',
+                            help='Proportion of videos that will be re-used during next epoch for hard-mining.')
+        self.parser.add_argument('--epochs_hm', type=int, metavar='N',
+                            help='The number of epochs to wait before updating the hard mined videos')
+
         self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                             help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                                 selects one of the two datasets.')
@@ -152,6 +160,19 @@ class ArgReader():
 
         self.parser.add_argument('--val_l_temp', type=int,metavar='LMAX',
                             help='Length of sequences for computation of scores when using a CNN temp model.')
+
+        self.parser.add_argument('--val_l_temp_overlap', type=int,metavar='LMAX',
+                            help='Size of the overlap between sequences passed to the CNN temp model')
+
+        self.parser.add_argument('--train_step_to_ignore', type=int,metavar='LMAX',
+                            help='Number of steps that will be ignored at the begining and at the end of the training sequence for binary cross entropy computation')
+
+        self.parser.add_argument('--sparsi_weig', type=float,metavar='LMAX',
+                            help='Weight of the term rewarding the sparsity in the score prediction')
+        self.parser.add_argument('--sparsi_wind', type=int,metavar='LMAX',
+                            help='Half-size of the window taken into account for the sparsity term')
+        self.parser.add_argument('--sparsi_thres', type=float,metavar='LMAX',
+                            help='Threshold above which the sum of scores in the window is considered too big ')
 
         self.parser.add_argument('--chan_temp_mod', type=int,metavar='LMAX',
                             help='The channel number of the temporal model, if it is a CNN')
@@ -226,6 +247,9 @@ class ArgReader():
                     help='The path to the weight file to use to initialise the network')
         self.parser.add_argument('--init_path_visual', type=str,metavar='SM',
                     help='The path to the weight file to use to initialise the visual model')
+        self.parser.add_argument('--init_path_visual_temp', type=str,metavar='SM',
+                    help='The path to the weight file to use to initialise the visual and the temporal model')
+
         self.parser.add_argument('--init_path_audio', type=str,metavar='SM',
                     help='The path to the weight file to use to initialise the audio model')
 
