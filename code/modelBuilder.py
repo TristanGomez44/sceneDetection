@@ -24,6 +24,8 @@ import vggish_input
 
 from torch.nn import DataParallel
 
+import processResults
+
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
     ''' Build a visual feature model
 
@@ -108,7 +110,7 @@ def buildAudioFeatModel(audioFeatModelName):
 
     return model
 
-class simpleAttention(nn.Module):
+class FrameAttention(nn.Module):
     ''' A frame attention module that computes a scalar weight for each frame in a batch
 
     Args:
@@ -119,7 +121,7 @@ class simpleAttention(nn.Module):
 
     def __init__(self,nbFeat,frameAttRepSize):
 
-        super(simpleAttention,self).__init__()
+        super(FrameAttention,self).__init__()
 
         self.linear = nn.Linear(nbFeat,frameAttRepSize)
         self.innerProdWeights = nn.Parameter(torch.randn(frameAttRepSize))
@@ -128,6 +130,26 @@ class simpleAttention(nn.Module):
         x = torch.tanh(self.linear(x))
         attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
         return attWeights
+
+class TempAttention(nn.Module):
+
+    def __init__(self,featNb,stateSize,attSize):
+        super(TempAttention,self).__init__()
+
+        self.linVec = nn.Linear(featNb,attSize)
+        self.linLSTMState = nn.Linear(stateSize,attSize)
+
+        self.linOut = nn.Linear(attSize,1)
+
+    def forward(self,featMap,h_cat):
+
+        origSize = featMap.size()
+        featMap.view(origSize[0]*origSize[1],origSize[2])
+
+        x = torch.tanh(self.linVec(featMap)+self.linLSTMState(h_cat))
+        x = torch.sigmoid(self.linOut(x).view(origSize[0],origSize[1],1))
+
+        return x
 
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
@@ -196,7 +218,7 @@ class CNN_sceneDet(nn.Module):
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -224,17 +246,36 @@ class CNN_sceneDet(nn.Module):
             self.cnn.load_state_dict(state_dict)
 
         self.pool = pool
+        self.featNb = 2048
+        self.hiddSize = 1024
+        self.attSize = 1024
+
+        if scoreConvWindSize > 1:
+            self.scoreConv = torch.nn.Conv1d(1,1,scoreConvWindSize,padding=scoreConvWindSize//2)
+        else:
+            self.scoreConv = None
 
         if self.pool == 'linear':
-            self.endLin = nn.Linear(chan*8*64*expansion,1)
+            self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
+        elif self.pool == 'lstm':
 
-    def forward(self,x):
+            self.att = TempAttention(self.featNb+1,self.hiddSize+1,self.attSize)
+            self.lstm = nn.LSTM(input_size=self.featNb+1,hidden_size=self.hiddSize,num_layers=1,batch_first=True)
+            self.lstm_lin = nn.Linear(self.hiddSize,self.hiddSize)
+            self.lstm_out = nn.Linear(self.hiddSize,1)
+
+    def forward(self,x,gt=None,attList=None):
 
         x = self.cnn(x)
         x = x.permute(0,2,1,3)
 
         if self.pool == "mean":
-            x= x.mean(dim=-1).mean(dim=-1)
+            x = x.mean(dim=-1).mean(dim=-1)
+
+            if self.scoreConv is not None:
+                x = self.scoreConv(x.unsqueeze(1)).squeeze(1)
+
+            x = torch.sigmoid(x)
         elif self.pool == "linear":
 
             origSize = x.size()
@@ -243,10 +284,67 @@ class CNN_sceneDet(nn.Module):
             x = self.endLin(x)
             x = x.view(origSize[0],origSize[1])
 
+            if self.scoreConv is not None:
+                x = self.scoreConv(x.unsqueeze(1)).squeeze(1)
+
+            x = torch.sigmoid(x)
+        elif self.pool == "lstm":
+
+            x= x.mean(dim=-1)
+
+            inds = torch.arange(x.size(1)).unsqueeze(0).unsqueeze(2).expand(x.size(0),x.size(1),1).float().to(x.device)
+            x = torch.cat((x,inds),dim=-1)
+
+            if not gt is None:
+
+                lenListBatch = []
+                for i in range(len(gt)):
+
+                    gt_bounds = torch.tensor(processResults.binaryToSceneBounds(gt[i])).to(x.device).float()
+                    gt_bounds = gt_bounds/gt_bounds.max()
+
+                    h = torch.zeros((1,1,self.hiddSize)).to(x.device)
+                    c = torch.zeros((1,1,self.hiddSize)).to(x.device)
+                    pp = torch.zeros(1,1).to(x.device)
+                    real_pp = torch.zeros(1).to(x.device)
+                    featMap = x[i].unsqueeze(0)
+
+                    lenList = torch.zeros(len(gt_bounds)).to(x.device)
+                    for j in range(len(gt_bounds)):
+
+                        h_cat = torch.cat((h[0],pp),dim=-1)
+                        attWei = self.att(featMap,h_cat)
+
+                        #print("real_pp",real_pp)
+                        if i==0 and (not attList is None) and real_pp <= 1:
+
+                            if j == 0:
+                                attList.append(attWei.data)
+                            else:
+                                attList[-1] = torch.cat((attList[-1],attWei.data),dim=-1)
+
+                        v = ((featMap*attWei).sum(dim=1)/attWei.sum(dim=1)).unsqueeze(1)
+                        h,(_,c) = self.lstm(v,(h,c))
+                        predSceneLen = torch.sigmoid(self.lstm_out(F.relu(self.lstm_lin(h))))
+
+                        #pp += predSceneLen.item()
+                        pp = gt_bounds[j,1].unsqueeze(0).unsqueeze(0)
+
+                        real_pp += predSceneLen.item()
+
+                        lenList[j] = predSceneLen
+
+                    lenListBatch.append(lenList)
+
+                if not attList is None:
+                    print("len(attList)",len(attList))
+
+                return lenListBatch
+            else:
+                raise NotImplementedError
+
         else:
             raise ValueError("Unkown pool mode for CNN temp model {}".format(self.pool))
-
-        x = torch.sigmoid(x)
 
         return x
 
@@ -260,7 +358,7 @@ class SceneDet(nn.Module):
     - hiddenSize,layerNb,dropout,bidirect : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
     - cuda (bool): whether or not the computation should be done on gpu
     - framesPerShot (int): the number of frame to use to represent a shot
-    - frameAttRepSize (int): the size of the frame attention (see simpleAttention module)
+    - frameAttRepSize (int): the size of the frame attention (see FrameAttention module)
     - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
     - chanTempMod, pretrTempMod, poolTempMod, dilTempMod: respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
         model is a resnet.
@@ -268,7 +366,7 @@ class SceneDet(nn.Module):
     '''
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod):
+                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize):
 
         super(SceneDet,self).__init__()
 
@@ -296,16 +394,16 @@ class SceneDet(nn.Module):
         if not self.audioFeatModel is None:
             nbFeat += 128
 
-        self.frameAtt = simpleAttention(nbFeat,frameAttRepSize)
+        self.frameAtt = FrameAttention(nbFeat,frameAttRepSize)
 
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize)
 
         self.nb_gpus = torch.cuda.device_count()
 
-    def forward(self,x,audio,h=None,c=None):
+    def forward(self,x,audio,h=None,c=None,gt=None):
         ''' The forward pass of the scene change model
 
         Args:
@@ -320,7 +418,7 @@ class SceneDet(nn.Module):
 
         x = self.computeFeat(x,audio,h,c)
 
-        return self.computeScore(x,h,c)
+        return self.computeScore(x,h,c,gt)
 
     def computeFeat(self,x,audio,h=None,c=None):
 
@@ -337,8 +435,6 @@ class SceneDet(nn.Module):
 
             x = torch.cat((x,audio),dim=-1)
 
-        print("Just before frame attention",x.size())
-        sys.exit(0)
         attWeights = self.frameAtt(x)
 
         #Unflattening
@@ -348,14 +444,14 @@ class SceneDet(nn.Module):
         x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
         return x
 
-    def computeScore(self,x,h=None,c=None):
+    def computeScore(self,x,h=None,c=None,gt=None,attList=None):
 
         if self.temp_model == "RNN":
             return self.tempModel(x,h,c)
         elif self.temp_model.find("resnet") != -1:
             x = x.unsqueeze(1)
             x = x.expand(x.size(0),x.size(1)*3,x.size(2),x.size(3))
-            return self.tempModel(x)
+            return self.tempModel(x,gt,attList)
 
     def getParams(self):
 
@@ -378,7 +474,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
                     args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod,args.dil_temp_mod)
+                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size)
 
     return net
 
