@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 from skimage.transform import resize
 import sys
 import shotdetect
+import shutil
 
 CV_DEF_FPS = 30
 
@@ -33,7 +34,8 @@ def main(argv=None):
     argreader.parser.add_argument('--dataset', type=str, metavar='N',help='The dataset')
     argreader.parser.add_argument('--merge_videos',type=str, metavar='EXT',help='Accumulate the clips from a folder to obtain one video per movie in the dataset. The value \
                                     is the extension of the video files, example : \'avi\'.')
-    argreader.parser.add_argument('--format_youtube',action='store_true',help='Put the clips into separate folder')
+    argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube and the youtube_large datasets. Put the clips into separate folder')
+    argreader.parser.add_argument('--format_bbc',action='store_true',help='Format the bbc dataset')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -253,7 +255,7 @@ def main(argv=None):
                     print("\t",videoPath)
 
                     cap = cv2.VideoCapture(videoPath)
-                    extractAudio(videoPath,videoFoldPath)
+                    extractAudio(videoPath)
                     accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
 
                     #Getting the number of frames of the video
@@ -329,6 +331,62 @@ def main(argv=None):
                 shutil.move(os.path.dirname(resPath),"../data/youtBadShotDet/")
                 shutil.move(os.path.dirname(resPath)+".mp4","../data/youtBadShotDet/")
 
+    if args.format_bbc:
+
+        videosPaths = sorted(glob.glob("../data/PlanetEarth/*.mkv"))
+
+        #This creates the bbc folder and the annotation folder in it
+        if not os.path.exists("../data/bbc/annotations"):
+            os.makedirs("../data/bbc/annotations")
+
+        rawshotFilePaths = sorted(glob.glob("../data/PlanetEarth/annotations/shots/*.txt"))
+        rawSceneFilePaths = sorted(glob.glob("../data/PlanetEarth/annotations/scenes/annotator_0/*"))
+
+        for i,path in enumerate(videosPaths):
+
+            print(path,rawshotFilePaths[i])
+
+            vidName = str(i)
+
+            newPath = path.replace("PlanetEarth","bbc")
+            newPath = os.path.dirname(newPath)+"/"+vidName+".mkv"
+
+            videoFold = os.path.splitext(newPath)[0]
+
+            if not os.path.exists(videoFold):
+                os.makedirs(videoFold)
+
+            #Copy video
+            shutil.copyfile(path,newPath)
+
+            #Extract audio
+            extractAudio(newPath)
+
+            #Extract shots
+            rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
+            shotCSV = removeHoles(rawShotCSV)
+            np.savetxt(videoFold+"/result.csv",shotCSV)
+
+            #Extract scenes:
+            starts = np.genfromtxt(rawSceneFilePaths[i],delimiter=",").transpose()
+            print(rawSceneFilePaths[i],starts)
+            shotNb = len(rawShotCSV)
+            ends = np.concatenate((starts[1:]-1,[shotNb]),axis=0)
+            starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
+            scenes = np.concatenate((starts,ends),axis=1)
+            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenes)
+
+def removeHoles(csvFile):
+
+    starts = csvFile[:,0]
+
+    end = csvFile[-1,1]
+    ends = np.concatenate((starts[1:]-1,[end]),axis=0)[:,np.newaxis]
+
+    csvFile = np.concatenate((starts[:,np.newaxis],ends),axis=1)
+
+    return csvFile
+
 def common_str(string1, string2):
     answer = ""
     len1, len2 = len(string1), len(string2)
@@ -360,26 +418,14 @@ def removeBadChar(dataset):
     videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
     removeBadChar_list(videoPaths)
 
-def extractAudio(videoPath,videoFoldPath):
+def extractAudio(videoPath):
     #Extracting audio
     videoSubFold =  os.path.splitext(videoPath)[0]
     audioPath = videoSubFold+".wav"
 
     if not os.path.exists(audioPath):
 
-        subprocess.run("ffprobe "+videoPath+" 2> tmp.txt",shell=True)
-
-        audioInfStr = None
-        with open("tmp.txt") as metadata:
-            for line in metadata:
-                if line.find("Audio:") != -1:
-                    audioInfStr = line
-        if not audioInfStr:
-            raise ValueError("No audio data found in ffprobe output")
-
-        audioSampleRate = int(audioInfStr.split(",")[1].replace(",","").replace("Hz","").replace(" ",""))
-        audioBitRate = int(audioInfStr.split(",")[4].replace(",","").replace("kb/s","").replace(" ","").replace("(default)\n",""))*1000
-        command = "ffmpeg -loglevel panic -i {} -ab {} -ac 2 -ar {} -vn {}".format(videoPath,audioBitRate,audioSampleRate,audioPath)
+        command = "ffmpeg -loglevel panic -i {} -vn {}".format(videoPath,audioPath)
         subprocess.call(command, shell=True)
 
 def accumulateAudio(audioPath,accAudioData):
