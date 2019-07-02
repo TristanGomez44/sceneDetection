@@ -12,7 +12,7 @@ import matplotlib.cm as cm
 import pims
 import cv2
 from PIL import Image
-
+import torch
 import subprocess
 from skimage.transform import resize
 
@@ -169,7 +169,7 @@ def binaryToSceneBounds(scenesBinary):
     - scenesBinary (list): a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
                     the shot is the first shot of a new scene. A 0 indicates otherwise.
 
-     '''
+    '''
 
     sceneBounds = []
     currSceneStart=0
@@ -183,6 +183,25 @@ def binaryToSceneBounds(scenesBinary):
     sceneBounds.append([currSceneStart,len(scenesBinary)-1])
 
     return sceneBounds
+
+def scenePropToBinary(sceneProps,shotNb):
+    ''' Convert a list of scene length into the binary format '''
+
+    if type(shotNb) is int:
+        shotNb = [shotNb for _ in range(len(sceneProps))]
+
+    #Looping over batches
+    binary = torch.zeros((len(sceneProps),shotNb[0])).to(sceneProps[0].device)
+
+    for i in range(len(sceneProps)):
+
+        sceneStarts = torch.cumsum(sceneProps[i]*shotNb[i],dim=0).long()
+
+        sceneStarts = sceneStarts[sceneStarts < shotNb[i]]
+
+        binary[i][sceneStarts] = 1
+
+    return binary
 
 def frame_to_shots(dataset,vidName,scenesF):
     ''' Computes scene boundaries relative with shot index instead of frame index '''
@@ -230,7 +249,7 @@ def xmlToArray(xmlPath):
     ''' Read the shot segmentation for a video
 
     If the shot segmentation does not exist in .xml at the path indicated, \
-    this function look for the segmentation in csv file, in the same folder. 
+    this function look for the segmentation in csv file, in the same folder.
 
      '''
 
@@ -357,7 +376,6 @@ def IoU_oneRef(sceneCuts1,sceneCuts2):
             iou[j] = inter(sceneCuts1[i],sceneCuts2[j])/union(sceneCuts1[i],sceneCuts2[j])
 
         iou_mean += iou.max()
-
     iou_mean /= len(sceneCuts1)
 
     return iou_mean
@@ -375,6 +393,34 @@ def inter(a,b):
     else:
         return min(a[1],b[1])-max(a[0],b[0])+1
 
+def IoU_par(gt,pred):
+    ''' Computes the Intersection over Union of a scene segmentation
+
+    Args:
+    - gt (array): the ground truth segmentation. It is a list of gr interval (each interval is a tuple made of the first and the last shot index of the scene)
+    - pred (array): the predicted segmentation. Same format as gt
+
+    Returns:
+    - the IoU of the predicted scene segmentation with the ground-truth
+
+    '''
+
+    #The IoU is first computed relative to the ground truth and then relative to the prediction
+    return 0.5*(IoU_oneRef_par(gt,pred)+IoU_oneRef_par(pred,gt))
+
+def IoU_oneRef_par(sceneCuts1,sceneCuts2):
+    iou = inter_par(sceneCuts1.unsqueeze(1),sceneCuts2.unsqueeze(0))/union_par(sceneCuts1.unsqueeze(1),sceneCuts2.unsqueeze(0))
+
+    return torch.max(iou,dim=1)[0].mean()
+
+def union_par(a,b):
+
+    return b[:,:,1]-b[:,:,0]+1+a[:,:,1]-a[:,:,0]+1-inter_par(a,b)
+
+def inter_par(a,b):
+
+    return (1-((b[:,:,0] > a[:,:,1])+(a[:,:,0] > b[:,:,1])>=1)).float()*(torch.min(a[:,:,1],b[:,:,1])-torch.max(a[:,:,0],b[:,:,0])+1)
+
 def minus(a,b):
     ''' the interval a minus the interval b '''
 
@@ -386,6 +432,34 @@ def minus(a,b):
             totalLen += 1
 
     return totalLen
+
+def continuousIoU(batch,gt):
+
+    ious = torch.empty(len(batch),requires_grad=False)
+    for i,output in enumerate(batch):
+
+        firstInd = torch.tensor([0.0]).to(gt.device)
+        endInd = torch.tensor([1.0]).to(gt.device)
+
+        output = torch.cat((firstInd,output),dim=0)
+        output = torch.cumsum(output,dim=0)*len(gt[i])
+
+        output = output[output < len(gt[i])]
+
+        output = torch.cat((output,endInd*len(gt[i])),dim=0)
+
+        ends = (output[:-1]+9*output[1:])/10
+        ends[-1] = len(gt[i])
+
+        starts = output[:-1]
+
+        scenes_pred = torch.cat((starts.unsqueeze(1),ends.unsqueeze(1)),dim=1)
+
+        scenes_gt = torch.tensor(binaryToSceneBounds(gt[i])).float().to(gt.device)
+
+        ious[i] = IoU_par(scenes_gt,scenes_pred)
+
+    return ious.mean()
 
 def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     ''' Plot the scene change score on the image of a video
