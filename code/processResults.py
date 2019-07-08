@@ -104,7 +104,6 @@ def compGT(exp_id,metric,thres):
         modelId = os.path.basename(modelIniPath.replace(".ini",""))
 
         sceneCutsPathList = glob.glob("../results/{}/{}_*.csv".format(exp_id,modelId))
-        print(sceneCutsPathList)
         metricsArr=np.zeros(len(sceneCutsPathList))
         for i,sceneCutsPath in enumerate(sceneCutsPathList):
 
@@ -482,7 +481,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     splitResFileName = os.path.splitext(os.path.basename(resFilePath))[0].split("_")
 
-    i =0
+    i=0
     epochFound = False
     while i < len(splitResFileName) and not epochFound:
 
@@ -501,7 +500,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     shotFrames = xmlToArray("../data/{}/{}/result.xml".format(dataset,videoName))
 
     cap = cv2.VideoCapture(videoPath)
-
+    print(cap)
     shotCount = 0
 
     widProp = 0.6
@@ -513,7 +512,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     imgWidth,imgHeigth = None,None
 
     fps = getVideoFPS(videoPath)
-
+    print("Fps",fps)
     videoRes = None
     while success:
         success, imageRaw = cap.read()
@@ -571,9 +570,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
         #Lines between dots
         for j in range(len(scoresToPlot)-1):
-
             cv2.line(imageRaw,(xList[j],yList[j]),(xList[j+1],yList[j+1]),(255,255,255),1)
-
 
         videoRes.write(imageRaw)
 
@@ -606,6 +603,73 @@ def getVideoFPS(videoPath,exp_id=None):
 
     return fps
 
+def convScoPlot(weightFile):
+
+    model_id = os.path.basename(weightFile)
+    end = model_id.find("_epoch")
+    model_id = model_id[5:end]
+
+    exp_id = weightFile.split("/")[-2]
+
+    epoch = int(os.path.basename(weightFile).split("_")[-1][5:])
+
+    paramDict = torch.load(weightFile)
+
+    for key in paramDict.keys():
+
+        if key.find("scoreConv.weight") != -1:
+            weight =  paramDict[key]
+
+    inSize = 100
+    impAmpl = 1
+
+    inp = torch.zeros(1,1,inSize).to(weight.device)
+    inp[0,0,inSize//2] = impAmpl
+
+    out = torch.nn.functional.conv1d(inp, weight,padding=weight.size(-1)//2)[0,0].cpu().detach().numpy()
+
+    print(out.shape)
+
+    plt.figure()
+    plt.title("Impulse response of {} score filter".format(model_id))
+    plt.xlabel("Time")
+    plt.ylabel("Amplitude")
+    plt.plot(out)
+    plt.savefig("../vis/{}/model{}_epoch{}_impResp.png".format(exp_id,model_id,epoch))
+
+    fft = np.abs(np.fft.fft(out))[:inSize//2]
+
+    print(fft.shape)
+
+    plt.figure()
+    plt.title("Fourrier transform of {} score filter".format(model_id))
+    plt.xlabel("frequency")
+    plt.ylabel("Amplitude")
+    plt.ylim(0,max(fft)*1.2)
+    plt.plot(fft)
+    plt.savefig("../vis/{}/model{}_epoch{}_fourrier.png".format(exp_id,model_id,epoch))
+
+def plotScore(exp_id,model_id,dataset_test):
+
+    resFilePaths = sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)))
+
+    for path in resFilePaths:
+
+        fileName = os.path.basename(os.path.splitext(path)[0])
+        videoName = fileName.split("_")[-1]
+
+        scores = np.genfromtxt(path)[:,1]
+        gt = np.zeros(len(scores)+1)
+        gtSceneStarts = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset_test,videoName))[:,0].astype(int)
+        gt[gtSceneStarts] = 1
+
+        plt.figure(figsize=(30,5))
+        #plt.plot(gt)
+        plt.vlines(gtSceneStarts,0,1,linewidths=3,color='gray')
+
+        plt.plot(scores)
+        plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -628,8 +692,11 @@ def main(argv=None):
                                     The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should be set.')
 
     argreader.parser.add_argument('--score_vis_video',type=str,help='To plot the scene change score on the video itself. Requires the --dataset_test and --exp_id arguments to be set. The value is a path to a result file.')
-
     argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
+    argreader.parser.add_argument('--conv_sco_plot',type=str,help='To plot the frequency response of the 1D filter learned by a model filtering its scores. The value is the path to the weight file.')
+
+    argreader.parser.add_argument('--plot_score',action='store_true',help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
+                                                                            The model_id argument must be set, along with tge exp_id and the dataset_test arguments.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -648,6 +715,10 @@ def main(argv=None):
         scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
     if args.plot_cat_repr:
         plotCatRepr(args.plot_cat_repr)
+    if args.conv_sco_plot:
+        convScoPlot(args.conv_sco_plot)
+    if args.plot_score:
+        plotScore(args.exp_id,args.model_id,args.dataset_test)
 
 if __name__ == "__main__":
     main()
