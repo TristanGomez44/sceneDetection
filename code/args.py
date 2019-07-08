@@ -108,6 +108,10 @@ class ArgReader():
 
         self.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
                             help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
+        self.parser.add_argument('--scene_len_cnn_pool', type=int, metavar='N',
+                            help='The l')
+
+
 
         self.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
                             help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
