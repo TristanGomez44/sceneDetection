@@ -27,6 +27,9 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
+import sys
+from PIL import Image
+
 def sparsiRew(output,wind,thres):
 
     weight = torch.ones(1,1,wind).to(output.device)
@@ -206,7 +209,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
                     audio = audio.cuda()
 
             if args.temp_model.find("resnet") != -1:
-                if args.pool_temp_mod == "lstm":
+                if args.pool_temp_mod == "lstm" or args.pool_temp_mod == "cnn":
                     output = model(data,audio,None,None,target)
                 else:
                     output = model(data,audio)
@@ -214,7 +217,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
                 output,_ = model(data,audio)
 
             #Loss
-            if args.pool_temp_mod == 'lstm':
+            if args.pool_temp_mod == 'lstm' or args.pool_temp_mod=="cnn":
                 loss = -processResults.continuousIoU(output, target)
             elif args.soft_loss:
                 output = output[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
@@ -236,7 +239,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
             optim.step()
             optim.zero_grad()
 
-            if args.pool_temp_mod == "lstm":
+            if args.pool_temp_mod == "lstm" or args.pool_temp_mod=="cnn":
                 output = processResults.scenePropToBinary(output,data.size(1))
 
             #Metrics
@@ -271,7 +274,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
 
     #Compute the mean f-score of the all the videos processed during this training epoch
     agregateHMDict(hmDict)
-    print(hmDict)
+
     return hmDict
 
 def updateHMDict(hmDict,coverage,overflow,vidNames):
@@ -288,6 +291,41 @@ def agregateHMDict(hmDict):
 
     for vidName in hmDict.keys():
         hmDict[vidName] = np.array(hmDict[vidName]).mean()
+
+def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict):
+    if args.temp_model.find("resnet") != -1:
+        allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
+
+    if args.pool_temp_mod == 'lstm' or args.pool_temp_mod == 'cnn'  :
+        loss = -processResults.continuousIoU(allOutput, allTarget)
+    elif args.soft_loss:
+        softAllTarget = softTarget(allOutput,allTarget,width)
+        loss = F.binary_cross_entropy(allOutput,softAllTarget).data.item()
+    else:
+        weights = getWeights(allTarget,args.class_weight)
+        loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
+
+    if args.sparsi_weig > 0:
+        loss += args.sparsi_weig*sparsiRew(allOutput.data,args.sparsi_wind,args.sparsi_thres)
+
+    total_loss += loss
+
+    if args.pool_temp_mod=="lstm" or args.pool_temp_mod=="cnn":
+        allOutput = processResults.scenePropToBinary(allOutput,allTarget.size(1))
+
+    outDict[precVidName] = allOutput
+    targDict[precVidName] = allTarget
+
+    cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
+    total_cover += cov
+    total_overflow += overflow
+    total_iou += iou
+
+    total_auc += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
+
+    nbVideos += 1
+
+    return allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc
 
 def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyStop,metricLastVal,maximiseMetric):
     '''
@@ -320,9 +358,10 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
     validBatch = 0
     nbVideos = 0
 
-    attDict = {}
 
     for batch_idx, (data, audio,target,vidName,frameInds) in enumerate(loader):
+
+        #print(vidName,target.sum(),target.size())
 
         newVideo = (vidName != precVidName) or videoBegining
 
@@ -349,39 +388,9 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
         updateFrameDict(frameIndDict,frameInds,vidName)
 
         if newVideo and not videoBegining:
-
-            if args.temp_model.find("resnet") != -1:
-                allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,attDict,precVidName)
-
-            if args.pool_temp_mod == 'lstm':
-                loss = -processResults.continuousIoU(allOutput, target)
-            elif args.soft_loss:
-                softAllTarget = softTarget(allOutput,allTarget,width)
-                loss = F.binary_cross_entropy(allOutput,softAllTarget).data.item()
-            else:
-                weights = getWeights(allTarget,args.class_weight)
-                loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
-
-            if args.sparsi_weig > 0:
-                loss += args.sparsi_weig*sparsiRew(allOutput,args.sparsi_wind,args.sparsi_thres)
-
-            total_loss += loss
-
-            if args.pool_temp_mod == "lstm":
-                allOutput = processResults.scenePropToBinary(allOutput,allTarget.size(1))
-
-            outDict[precVidName] = allOutput
-            targDict[precVidName] = allTarget
-
-            cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
-            total_cover += cov
-            total_overflow += overflow
-            total_iou += iou
-
-            total_auc += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
-
-            nbVideos += 1
-
+            #print("targDict",targDict)
+            allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
+                                                                                                    total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict)
         if newVideo:
             allTarget = target
             allOutput = output
@@ -394,6 +403,10 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
         if nbVideos > 1 and args.debug:
             break
+
+    if not args.debug:
+        allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
+                                                                                        total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict)
 
     for key in outDict.keys():
         fullArr = torch.cat((frameIndDict[key].float(),outDict[key].permute(1,0)),dim=1)
@@ -420,12 +433,12 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
         if len(paths) != 0:
             os.remove(paths[0])
         torch.save(model.state_dict(), "../models/{}/model{}_best_epoch{}".format(args.exp_id,args.model_id, epoch))
-        return metricVal,outDict,targDict,attDict
+        return metricVal,outDict,targDict
 
     else:
-        return metricLastVal,outDict,targDict,attDict
+        return metricLastVal,outDict,targDict
 
-def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,attDict,vidName):
+def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
 
     allOutput = None
     splitSizes = [valLTemp for _ in range(allFeats.size(1)//valLTemp)]
@@ -438,22 +451,18 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,attDict,v
 
     sumSize = 0
 
-    if poolTempMod == "lstm":
+    if poolTempMod == "lstm" or poolTempMod=="cnn":
         attList = []
     else:
         attList = None
 
     for i in range(len(chunkList)):
 
-        if poolTempMod == "lstm":
+        if poolTempMod == "lstm" or poolTempMod=="cnn":
             targets = allTarget[:,sumSize:sumSize+chunkList[i].size(1)]
-            if not vidName in attDict.keys():
-                output = model.computeScore(chunkList[i],None,None,targets,attList)[0].unsqueeze(0).data
+            output = model.computeScore(chunkList[i],None,None,targets)[0].unsqueeze(0).data[:,overlap:chunkList[i].size(1)-overlap]
 
-            else:
-                output = model.computeScore(chunkList[i],None,None,targets)[0].unsqueeze(0).data[:,overlap:chunkList[i].size(1)-overlap]
-
-            print(output.size(),len(attList))
+            #print(output.size(),len(attList))
         else:
             output = model.computeScore(chunkList[i]).data[:,overlap:chunkList[i].size(1)-overlap]
 
@@ -464,7 +473,6 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,attDict,v
 
         sumSize += len(chunkList[i])
 
-    attDict[vidName] = attList
     return allOutput
 
 def splitWithOverlap(allFeat,splitSizes,overlap):
@@ -769,7 +777,6 @@ def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
 
         plt.bar(len(outDictEpochs.keys())+off,targBounds[:,1]+1-targBounds[:,0],width,bottom=targBounds[:,0],color=cmap,edgecolor='black')
 
-
         for j,epoch in enumerate(outDictEpochs.keys()):
 
             predBounds = np.array(processResults.binaryToSceneBounds(outDictEpochs[epoch][vidName][0]))
@@ -779,35 +786,6 @@ def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
 
         writer.add_figure(model_id+"_val"+"_"+vidName,fig,firstEpoch)
 
-def updateAttPlot(writer,model_id,attDictEpochs):
-
-    firstEpoch = list(attDictEpochs.keys())[0]
-
-    for i,vidName in enumerate(attDictEpochs[firstEpoch].keys()):
-
-        fig = plt.figure()
-
-        fig, axes = plt.subplots(len(attDictEpochs[firstEpoch][vidName]),len(attDictEpochs.keys()),squeeze=False)
-        plt.subplots_adjust(hspace=0,wspace = 0.2)
-
-        for k,epoch in enumerate(attDictEpochs.keys()):
-
-            attList = attDictEpochs[firstEpoch][vidName]
-
-            for j,att in enumerate(attList):
-
-                #attImg = torch.cat([attList[sceneInd].squeeze().unsqueeze(1) for sceneInd in range(len(attList))],dim=1)
-                attImg = att.squeeze()
-
-                attImg = (attImg.detach().cpu().numpy()*255).astype("uint8")
-
-                attImg = resize(attImg,(attImg.shape[0],40),0,mode='constant')
-
-                axes[j, k].imshow(attImg)
-                axes[j, k].tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=False)
-                axes[j, k].tick_params(axis='y',which='both',left=False,right=False,labelleft=False)
-
-        writer.add_figure(model_id+"_val"+"_"+vidName+"_att",fig,firstEpoch)
 
 def updateHardMin(hmDict,trainDataset,args):
 
@@ -815,14 +793,11 @@ def updateHardMin(hmDict,trainDataset,args):
     names = list(map(lambda x: os.path.basename(os.path.splitext(x)[0]),paths))
 
     for i in range(len(names)):
-        hmDict[names[i]] = (i,hmDict[names[i]])
-
-    print("hmDict with inds",hmDict)
+        if names[i] in hmDict.keys():
+            hmDict[names[i]] = (i,hmDict[names[i]])
 
     vidIndsScores = list(sorted([hmDict[name] for name in hmDict.keys()],key=lambda x:x[1]))
     vidInds = list(map(lambda x:x[0],vidIndsScores))
-
-    print("hmDict sorted",vidInds)
 
     sampler = load_data.Sampler(len(trainDataset.videoPaths),trainDataset.nbShots,args.l_max,vidInds,args.hm_prop)
     trainLoader = torch.utils.data.DataLoader(dataset=trainDataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
@@ -1006,8 +981,6 @@ def main(argv=None):
         if not args.train_siam:
             outDictEpochs = {}
             targDictEpochs = {}
-            if args.temp_model.find("resnet") != -1 and args.pool_temp_mod == "lstm":
-                attDictEpochs = {}
 
         for epoch in range(startEpoch, args.epochs + 1):
 
@@ -1049,15 +1022,11 @@ def main(argv=None):
             if not args.train_siam:
                 kwargsVal["metricLastVal"] = metricLastVal
                 kwargsVal["width"] = width
-                metricLastVal,outDict,targDict,attDict = valFunc(**kwargsVal)
+                metricLastVal,outDict,targDict = valFunc(**kwargsVal)
 
                 outDictEpochs[epoch] = outDict
                 targDictEpochs[epoch] = targDict
                 updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
-
-                if args.temp_model.find("resnet") != -1 and args.pool_temp_mod == "lstm":
-                    attDictEpochs[epoch] = attDict
-                    updateAttPlot(writer,args.model_id,attDictEpochs)
 
             else:
                 valFunc(**kwargsVal)
