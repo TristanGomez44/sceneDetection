@@ -131,25 +131,7 @@ class FrameAttention(nn.Module):
         attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
         return attWeights
 
-class TempAttention(nn.Module):
 
-    def __init__(self,featNb,stateSize,attSize):
-        super(TempAttention,self).__init__()
-
-        self.linVec = nn.Linear(featNb,attSize)
-        self.linLSTMState = nn.Linear(stateSize,attSize)
-
-        self.linOut = nn.Linear(attSize,1)
-
-    def forward(self,featMap,h_cat):
-
-        origSize = featMap.size()
-        featMap.view(origSize[0]*origSize[1],origSize[2])
-
-        x = torch.tanh(self.linVec(featMap)+self.linLSTMState(h_cat))
-        x = torch.sigmoid(self.linOut(x).view(origSize[0],origSize[1],1))
-
-        return x
 
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
@@ -218,7 +200,7 @@ class CNN_sceneDet(nn.Module):
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,sceneLenCnnPool=0):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -249,6 +231,9 @@ class CNN_sceneDet(nn.Module):
         self.featNb = 2048
         self.hiddSize = 1024
         self.attSize = 1024
+        self.layNb = 2
+        self.dropout = 0
+        self.sceneLenCnnPool = sceneLenCnnPool
 
         if scoreConvWindSize > 1:
             self.scoreConv = torch.nn.Conv1d(1,1,scoreConvWindSize,padding=scoreConvWindSize//2)
@@ -259,10 +244,12 @@ class CNN_sceneDet(nn.Module):
             self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
         elif self.pool == 'lstm':
 
-            self.att = TempAttention(self.featNb+1,self.hiddSize+1,self.attSize)
-            self.lstm = nn.LSTM(input_size=self.featNb+1,hidden_size=self.hiddSize,num_layers=1,batch_first=True)
-            self.lstm_lin = nn.Linear(self.hiddSize,self.hiddSize)
-            self.lstm_out = nn.Linear(self.hiddSize,1)
+            self.lstm = nn.LSTM(input_size=self.featNb,hidden_size=self.hiddSize,num_layers=self.layNb,batch_first=True,dropout=self.dropout,bidirectional=True)
+            self.lin = nn.Linear(2*self.hiddSize,1)
+
+        elif self.pool == "cnn":
+
+            self.cnnPool = nn.Sequential(nn.Linear(self.sceneLenCnnPool*2048//32,self.hiddSize),nn.ReLU(),nn.Linear(self.hiddSize,1),nn.Sigmoid())
 
     def forward(self,x,gt=None,attList=None):
 
@@ -292,57 +279,62 @@ class CNN_sceneDet(nn.Module):
 
             x= x.mean(dim=-1)
 
-            inds = torch.arange(x.size(1)).unsqueeze(0).unsqueeze(2).expand(x.size(0),x.size(1),1).float().to(x.device)
-            x = torch.cat((x,inds),dim=-1)
+            batchSceneProp = []
+            for i in range(x.size(0)):
 
-            if not gt is None:
+                parsedProportion = 0
+                scenePropList = []
 
-                lenListBatch = []
-                for i in range(len(gt)):
+                while parsedProportion < 1:
 
-                    gt_bounds = torch.tensor(processResults.binaryToSceneBounds(gt[i])).to(x.device).float()
-                    gt_bounds = gt_bounds/gt_bounds.max()
 
-                    h = torch.zeros((1,1,self.hiddSize)).to(x.device)
-                    c = torch.zeros((1,1,self.hiddSize)).to(x.device)
-                    pp = torch.zeros(1,1).to(x.device)
-                    real_pp = torch.zeros(1).to(x.device)
-                    featMap = x[i].unsqueeze(0)
+                    xToParse = x[i:i+1,int(parsedProportion*x.size(1)):]
+                    _,(h,_) = self.lstm(xToParse)
 
-                    lenList = torch.zeros(len(gt_bounds)).to(x.device)
-                    for j in range(len(gt_bounds)):
+                    h = h.view(self.layNb,2,self.hiddSize)[-1].contiguous().view(2*self.hiddSize).unsqueeze(0)
 
-                        h_cat = torch.cat((h[0],pp),dim=-1)
-                        attWei = self.att(featMap,h_cat)
+                    sceneProp = torch.sigmoid(self.lin(h))
 
-                        #print("real_pp",real_pp)
-                        if i==0 and (not attList is None) and real_pp <= 1:
+                    scenePropList.append(sceneProp.squeeze(1))
 
-                            if j == 0:
-                                attList.append(attWei.data)
-                            else:
-                                attList[-1] = torch.cat((attList[-1],attWei.data),dim=-1)
+                    parsedProportion += sceneProp.data
 
-                        v = ((featMap*attWei).sum(dim=1)/attWei.sum(dim=1)).unsqueeze(1)
-                        h,(_,c) = self.lstm(v,(h,c))
-                        predSceneLen = torch.sigmoid(self.lstm_out(F.relu(self.lstm_lin(h))))
+                batchSceneProp.append(torch.cat(scenePropList,dim=0))
 
-                        #pp += predSceneLen.item()
-                        pp = gt_bounds[j,1].unsqueeze(0).unsqueeze(0)
+            return batchSceneProp
 
-                        real_pp += predSceneLen.item()
+        elif self.pool == "cnn":
 
-                        lenList[j] = predSceneLen
+            #print(x.size())
+            x = x.mean(dim=2)
+            #print(x.size())
 
-                    lenListBatch.append(lenList)
+            batchSceneProp = []
+            for i in range(x.size(0)):
 
-                if not attList is None:
-                    print("len(attList)",len(attList))
+                parsedProportion = 0
+                scenePropList = []
 
-                return lenListBatch
-            else:
-                raise NotImplementedError
+                while parsedProportion < 1:
 
+                    res = x.permute(0,2,1)
+                    #print(res.size())
+                    res = nn.functional.interpolate(res, size=self.sceneLenCnnPool,mode='linear')
+                    #print(res.size())
+                    res = res.permute(0,2,1)
+
+                    print(res.size())
+                    res = res.contiguous().view(res.size(0),res.size(1)*res.size(2))
+                    print(res.size())
+                    sceneProp = self.cnnPool(res)
+                    print(sceneProp.size())
+                    scenePropList.append(sceneProp.squeeze(1))
+
+                    parsedProportion += sceneProp.data
+
+                batchSceneProp.append(torch.cat(scenePropList,dim=0))
+
+            return batchSceneProp
         else:
             raise ValueError("Unkown pool mode for CNN temp model {}".format(self.pool))
 
@@ -366,7 +358,7 @@ class SceneDet(nn.Module):
     '''
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize):
+                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize,sceneLenCnnPool):
 
         super(SceneDet,self).__init__()
 
@@ -399,7 +391,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("resnet") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,sceneLenCnnPool=sceneLenCnnPool)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -474,7 +466,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
                     args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size)
+                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.scene_len_cnn_pool)
 
     return net
 
