@@ -84,210 +84,32 @@ class ArgReader():
             )
         self.parser.set_defaults(**defaults)
 
-        # Training settings
-        #parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-
         self.parser.add_argument('--log_interval', type=int, metavar='M',
                             help='The number of batchs to wait between each console log')
-
-        self.parser.add_argument('--nb_worse_epochs', type=float, metavar='M',
-                            help='The number of epochs during which the performance on validation set can decrease without the training stops.')
-        self.parser.add_argument('--epochs', type=int, metavar='N',
-                            help='maximum number of epochs to train')
-
-        self.parser.add_argument('--feat', type=str, metavar='N',
-                            help='the net to use to produce feature for each shot')
-
-        self.parser.add_argument('--feat_audio', type=str, metavar='N',
-                            help='the net to use to produce audio feature for each shot')
-
-        self.parser.add_argument('--frames_per_shot', type=int, metavar='N',
-                            help='The number of frame to use to represent each shot')
-        self.parser.add_argument('--frame_att_rep_size', type=int, metavar='N',
-                            help='The size of the internal representation of the frame attention model')
-
-        self.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
-                            help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
-        self.parser.add_argument('--scene_len_cnn_pool', type=int, metavar='N',
-                            help='The l')
-
-
-
-        self.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
-                            help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
-
-        self.parser.add_argument('--hm_prop', type=float, metavar='N',
-                            help='Proportion of videos that will be re-used during next epoch for hard-mining.')
-        self.parser.add_argument('--epochs_hm', type=int, metavar='N',
-                            help='The number of epochs to wait before updating the hard mined videos')
-
-        self.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
-                            help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
-                                selects one of the two datasets.')
-        self.parser.add_argument('--hidden_size', type=int,metavar='HS',
-                            help='The size of the hidden layers in the RNN')
-        self.parser.add_argument('--num_layers', type=int,metavar='NL',
-                            help='The number of hidden layers in the RNN')
-        self.parser.add_argument('--dropout', type=float,metavar='D',
-                            help='The dropout amount on each layer of the RNN except the last one')
-        self.parser.add_argument('--bidirect', type=str2bool,metavar='BIDIR',
-                            help='If true, the RNN will be bi-bidirectional')
-        self.parser.add_argument('--redirect_out', type=str2bool,metavar='BIDIR',
-                            help='If true, the standard output will be redirected to a file python.out')
-
-        self.parser.add_argument('--train_visual', type=str2bool,metavar='BOOL',
-                            help='If true, the visual feature extractor will also be trained')
-
-        self.parser.add_argument('--train_audio', type=str2bool,metavar='BOOL',
-                            help='If true, the audio feature extractor will also be trained')
-
-        self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
-                            help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
-        self.parser.add_argument('--batch_size', type=int,metavar='BS',
-                            help='The batchsize to use for training')
-
-        self.parser.add_argument('--val_batch_size', type=int,metavar='BS',
-                            help='The batchsize to use for validation')
-
-        self.parser.add_argument('--metric_early_stop', type=str,metavar='METR',
-                            help='The metric to use for early stopping')
-        self.parser.add_argument('--maximise_metric', type=str2bool,metavar='BOOL',
-                            help='If true, The chosen metric for early stopping will be maximised')
-
-        self.parser.add_argument('--l_min', type=int,metavar='LMIN',
-                            help='The minimum length of a training sequence')
-        self.parser.add_argument('--l_max', type=int,metavar='LMAX',
-                            help='The maximum length of a training sequence')
-
-        self.parser.add_argument('--val_l', type=int,metavar='LMAX',
-                            help='Length of sequences for validation.')
-
-        self.parser.add_argument('--val_l_temp', type=int,metavar='LMAX',
-                            help='Length of sequences for computation of scores when using a CNN temp model.')
-
-        self.parser.add_argument('--val_l_temp_overlap', type=int,metavar='LMAX',
-                            help='Size of the overlap between sequences passed to the CNN temp model')
-
-        self.parser.add_argument('--train_step_to_ignore', type=int,metavar='LMAX',
-                            help='Number of steps that will be ignored at the begining and at the end of the training sequence for binary cross entropy computation')
-
-        self.parser.add_argument('--sparsi_weig', type=float,metavar='LMAX',
-                            help='Weight of the term rewarding the sparsity in the score prediction')
-        self.parser.add_argument('--sparsi_wind', type=int,metavar='LMAX',
-                            help='Half-size of the window taken into account for the sparsity term')
-        self.parser.add_argument('--sparsi_thres', type=float,metavar='LMAX',
-                            help='Threshold above which the sum of scores in the window is considered too big ')
-
-        self.parser.add_argument('--chan_temp_mod', type=int,metavar='LMAX',
-                            help='The channel number of the temporal model, if it is a CNN')
-
-        self.parser.add_argument('--pretr_temp_mod', type=str2bool, metavar='S',
-                            help='To have the temporal model pretrained on ImageNet, if it is a CNN')
-
-        self.parser.add_argument('--dil_temp_mod', type=int, metavar='S',
-                            help='The dilation of the temporal model convolution if it is a CNN.')
-
-        self.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
-                            help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
-
-        self.parser.add_argument('--img_width', type=int,metavar='WIDTH',
-                            help='The width of the resized images, if resize_image is True, else, the size of the image')
-        self.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
-                            help='The height of the resized images, if resize_image is True, else, the size of the image')
-
-        self.parser.add_argument('--train_part_beg', type=float,metavar='START',
-                            help='The (normalized) start position of the dataset to use for training')
-        self.parser.add_argument('--train_part_end', type=float,metavar='END',
-                            help='The (normalized) end position of the dataset to use for training')
-
-        self.parser.add_argument('--val_part_beg', type=float,metavar='START',
-                            help='The (normalized) start position of the dataset to use for validation')
-        self.parser.add_argument('--val_part_end', type=float,metavar='END',
-                            help='The (normalized) end position of the dataset to use for validation')
-
-        self.parser.add_argument('--test_part_beg', type=float,metavar='START',
-                            help='The (normalized) start position of the dataset to use for testing')
-        self.parser.add_argument('--test_part_end', type=float,metavar='END',
-                            help='The (normalized) end position of the dataset to use for testing')
-
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
                             help='the number of processes to load the data. num_workers equal 0 means that it’s \
                             the main process that will do the data loading when needed, num_workers equal 1 is\
                             the same as any n, but you’ll only have a single worker, so it might be slow')
-        self.parser.add_argument('--momentum', type=float, metavar='M',
-                            help='SGD momentum')
-        self.parser.add_argument('--seed', type=int, metavar='S',
-                            help='Seed used to initialise the random number generator.')
+        self.parser.add_argument('--cuda', type=str2bool, metavar='S',
+                            help='To run computations on the gpu')
+        self.parser.add_argument('--multi_gpu', type=str2bool, metavar='S',
+                            help='If cuda is true, run the computation with multiple gpu')
+        self.parser.add_argument('--debug', type=str2bool,metavar='BOOL',
+                            help="To run only a few batch of training and a few batch of validation")
+        self.parser.add_argument('--redirect_out', type=str2bool,metavar='BIDIR',
+                            help='If true, the standard output will be redirected to a file python.out')
+        self.parser.add_argument('--note', type=str,metavar='NOTE',
+                            help="A note on the model")
 
+        self.parser.add_argument('--epochs', type=int, metavar='N',
+                            help='maximum number of epochs to train')
+
+        #Arg to share
         self.parser.add_argument('--model_id', type=str, metavar='IND_ID',
                             help='the id of the individual model')
         self.parser.add_argument('--exp_id', type=str, metavar='EXP_ID',
                             help='the id of the experience')
-
-        self.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-        self.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-        self.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-
-        self.parser.add_argument('--cuda', type=str2bool, metavar='S',
-                            help='To run computations on the gpu')
-
-        self.parser.add_argument('--resize_image', type=str2bool, metavar='S',
-                            help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
-
-        self.parser.add_argument('--multi_gpu', type=str2bool, metavar='S',
-                            help='If cuda is true, run the computation with multiple gpu')
-
-        self.parser.add_argument('--class_weight', type=float, metavar='S',
-                            help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
-                            makes weights proportional to the class instance number of the other class.')
-
-        self.parser.add_argument('--optim', type=str, metavar='OPTIM',
-                            help='the optimizer to use (default: \'SGD\')')
-
-        self.parser.add_argument('--start_mode', type=str,metavar='SM',
-                    help='The mode to use to initialise the model. Can be \'scratch\' or \'fine_tune\'.')
-
-        self.parser.add_argument('--init_path', type=str,metavar='SM',
-                    help='The path to the weight file to use to initialise the network')
-        self.parser.add_argument('--init_path_visual', type=str,metavar='SM',
-                    help='The path to the weight file to use to initialise the visual model')
-        self.parser.add_argument('--init_path_visual_temp', type=str,metavar='SM',
-                    help='The path to the weight file to use to initialise the visual and the temporal model')
-
-        self.parser.add_argument('--init_path_audio', type=str,metavar='SM',
-                    help='The path to the weight file to use to initialise the audio model')
-
-
-        self.parser.add_argument('--noise', type=float, metavar='NOISE',
-                    help='the amount of noise to add in the gradient of the model (as a percentage of the norm)(default: 0.1)')
-
-        self.parser.add_argument('--param_to_opti', type=strToStrList,metavar='V',
-                            help="The parameters to optimise. Can be a list with elements among 'RNN','CNN'")
-
-        self.parser.add_argument('--note', type=str,metavar='NOTE',
-                            help="A note on the model")
-
-        self.parser.add_argument('--audio_len', type=float,metavar='NOTE',
-                            help="The length of the audio for each shot (in seconds)")
-        self.parser.add_argument('--margin', type=float,metavar='NOTE',
-                            help="The margin for the siamese network training.")
-        self.parser.add_argument('--dist_order', type=int,metavar='NOTE',
-                            help="The distance order to measure similarity for the siamese network.")
-        self.parser.add_argument('--mining_mode', type=str,metavar='MODE',
-                            help="The mining mode to use to train the siamese net. Can only be \'offline\'.")
-
-        self.parser.add_argument('--max_shots', type=int,metavar='NOTE',
-                            help="The maximum number of shots to use during an epoch before validating")
-
-        self.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
-                            help="To use target soften with a triangular kernel.")
-        self.parser.add_argument('--soft_loss_width', type=str2FloatList,metavar='MODE',
-                            help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
-
-        self.parser.add_argument('--temp_model', type=str,metavar='MODE',
-                            help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
-        self.parser.add_argument('--debug', type=str2bool,metavar='BOOL',
-                            help="To run only a few batch of training and a few batch of validation")
+        self.parser.add_argument('--seed', type=int, metavar='S',help='Seed used to initialise the random number generator.')
 
         self.args = None
 
