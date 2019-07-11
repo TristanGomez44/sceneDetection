@@ -22,266 +22,9 @@ import processResults
 import pims
 import time
 import torchvision
-
+import args
 import warnings
 warnings.filterwarnings('ignore',module=".*av.*")
-
-def getMiddleFrames(dataset,audioLen=1):
-    #Get the middles frames of each shot for all video in a dataset
-    #Require the shot to be pre-computed.
-
-    videoPathList = glob.glob("../data/{}/*.*".format(dataset))
-    videoPathList = list(filter(lambda x:x.find(".wav")==-1,videoPathList))
-
-    for videoPath in videoPathList:
-
-        dirname = "../data/{}/{}/".format(dataset,os.path.splitext(os.path.basename(videoPath))[0])
-        if not os.path.exists(dirname+"/middleFrames/"):
-            #print(videoPath)
-
-            videoName = os.path.splitext(os.path.basename(videoPath))[0]
-
-            os.makedirs(dirname+"/middleFrames/")
-
-            #Middle frame index extration
-            print("\t Middle frame extraction")
-            tree = ET.parse("{}/result.xml".format(dirname)).getroot()
-            shots = tree.find("content").find("body").find("shots")
-
-            frameNb = int(shots[-1].get("fduration"))+int(shots[-1].get("fbegin"))
-            fps = float(tree.find("content").find("head").find("media").find("fps").text)
-
-            #Extract the audio of the video
-            audioPath = os.path.dirname(videoPath)+"/"+videoName+".wav"
-            audioInfStr = tree.find("content").find("head").find("media").find("codec").find("audio").text
-
-            audioSampleRate = int(audioInfStr.split(",")[1].replace(",","").replace("Hz","").replace(" ",""))
-            audioBitRate = int(audioInfStr.split(",")[4].replace(",","").replace("kb/s","").replace(" ",""))*1000
-
-            if not os.path.exists(audioPath):
-                command = "ffmpeg -i {} -ab {} -ac 2 -ar {} -vn {}".format(videoPath,audioBitRate,audioSampleRate,audioPath)
-                subprocess.call(command, shell=True)
-
-            bounds = list(map(lambda x:int(x.get("fbegin")),shots))
-            bounds.append(frameNb)
-            keyFrameInd = []
-
-            for i,shot in enumerate(bounds):
-                if i < len(bounds)-1:
-                    keyFrameInd.append((bounds[i]+bounds[i+1])//2)
-
-            if dataset == "OVSD":
-                sceneBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,videoName),delimiter='\t')
-            else:
-                raise ValueError("Unknown dataset :".format(dataset))
-
-            cap = cv2.VideoCapture(videoPath)
-            success = True
-            i = 0
-            scene=0
-            newSceneShotIndexs = []
-            keyFrameInd = np.array(keyFrameInd)
-
-            #Opening the sound file
-            audioData, fs = sf.read(audioPath)
-            #audioData= np.transpose(audioData,[1,0])
-
-            while success:
-                success, imageRaw = cap.read()
-                if i in keyFrameInd:
-                    if scene < len(sceneBounds):
-                        if sceneBounds[scene,1] < i:
-                            print("Scene ",scene,"shot",np.where(keyFrameInd == i)[0][0],"frame",i,"time",(i//fps)//60,"m",(i//fps)%60,"s")
-                            newSceneShotIndexs.append(np.where(keyFrameInd == i)[0][0])
-                            scene += 1
-
-                    cv2.imwrite(dirname+"/middleFrames/frame"+str(i)+".png",imageRaw)
-
-                    #Writing the audio sample
-                    time = i/fps
-                    pos = time*audioSampleRate
-                    interv = audioLen*audioSampleRate/2
-                    sampleToWrite = audioData[int(round(pos-interv)):int(round(pos+interv)),:]
-                    fullArray = np.zeros((int(round(pos+interv))-int(round(pos-interv)),sampleToWrite.shape[1]))
-                    fullArray[:len(sampleToWrite)] = sampleToWrite
-
-                    sf.write(dirname+"/middleFrames/frame"+str(i)+".wav",fullArray,audioSampleRate,subtype='PCM_16',format="WAV")
-
-                i += 1
-
-            #This binary mask indicates if a shot is the begining of a new scene or not
-            sceneTransition = np.zeros((len(keyFrameInd)))
-
-            sceneTransition[newSceneShotIndexs] = 1
-
-            print(sceneTransition.nonzero())
-
-            np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,videoName),sceneTransition)
-
-class PairLoader():
-
-    def __init__(self,dataset,batchSize,imgSize,propStart,propEnd,shuffle,audioLen,resizeImage):
-
-        self.batchSize = batchSize
-        self.videoPathLists = list(filter(lambda x:x.find(".wav") ==-1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPathLists = list(filter(lambda x:x.find(".xml") == -1,self.videoPathLists))
-
-        nbVid = len(self.videoPathLists)
-        self.videoPathLists = self.videoPathLists[int(nbVid*propStart):int(nbVid*propEnd)]
-        print("Nb videos :",len(self.videoPathLists))
-        self.dataset=dataset
-        self.targetDict = {}
-        self.shuffle = shuffle
-        for videoPath in self.videoPathLists:
-            vidName = os.path.basename(os.path.splitext(videoPath)[0])
-            self.targetDict[vidName] = getGT(dataset,vidName)
-
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-        if not resizeImage:
-            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
-        else:
-            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.Resize(imgSize),transforms.ToTensor(),normalize])
-
-        self.audioLen = audioLen
-
-        self.video = None
-
-    def __iter__(self):
-
-        self.audioDict = {}
-        self.videoDict = {}
-        self.fpsDict = {}
-        self.fsDict = {}
-
-        self.vidPaths = []
-        self.vidNames = []
-        self.anchList,self.posList,self.negList = [],[],[]
-        self.anchTargList,self.posTargList,self.negTargList = [],[],[]
-
-        for videoPath in self.videoPathLists:
-
-            vidName = os.path.basename(os.path.splitext(videoPath)[0])
-            #print(vidName)
-            shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
-            shotInds = np.arange(len(shotBounds))
-            shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-            frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample().long()
-
-            sceneInds = np.cumsum(self.targetDict[vidName])
-
-            #Building anchor tensor
-            anchList,anchTargList = np.array(frameInds),sceneInds
-            anchorAndTarget = np.concatenate((anchList[:,np.newaxis],anchTargList[:,np.newaxis].astype(str)),axis=1)
-
-            #Building positive tensor
-            posAndTarget = np.zeros_like(anchorAndTarget)
-            for i in range(int(anchTargList[-1])+1):
-                imageTargScene = anchorAndTarget[anchorAndTarget[:,1].astype(float) == i]
-                np.random.shuffle(imageTargScene)
-                posAndTarget[anchorAndTarget[:,1].astype(float) == i] = imageTargScene
-
-            posList,posTargList = posAndTarget.transpose()
-
-            #Buiding negative tensor
-            negAndTarget = np.zeros_like(anchorAndTarget)
-
-            #print(anchorAndTarget)
-            for i in range(int(anchTargList[-1])+1):
-
-                imageTargDiff = anchorAndTarget[anchorAndTarget[:,1].astype(float) != i]
-                np.random.shuffle(imageTargDiff)
-
-                nbRep = 1+len(negAndTarget[anchorAndTarget[:,1].astype(float) == i])//len(imageTargDiff)
-
-                negAndTarget[anchorAndTarget[:,1].astype(float) == i] = imageTargDiff.repeat(nbRep,axis=0)[:(anchorAndTarget[:,1].astype(float) == i).sum()]
-
-            negList,negTargList = negAndTarget.transpose()
-
-            self.vidPaths.extend([videoPath for i in range(len(frameInds))])
-            self.vidNames.extend([vidName for i in range(len(frameInds))])
-            self.anchList.extend(anchList)
-            self.posList.extend(posList)
-            self.negList.extend(negList)
-            self.anchTargList.extend(anchTargList)
-            self.posTargList.extend(posTargList)
-            self.negTargList.extend(negTargList)
-
-        self.zipped = np.concatenate((np.array(self.vidPaths)[:,np.newaxis],np.array(self.vidNames)[:,np.newaxis],\
-                                 np.array(self.anchList)[:,np.newaxis],np.array(self.posList)[:,np.newaxis],np.array(self.negList)[:,np.newaxis],\
-                                 np.array(self.anchTargList)[:,np.newaxis],np.array(self.posTargList)[:,np.newaxis],np.array(self.negTargList)[:,np.newaxis]),axis=1)
-
-        if self.shuffle:
-
-            np.random.shuffle(self.zipped)
-
-        _,self.vidNames,self.anchList,self.posList,self.negList,self.anchTargList,self.posTargList,self.negTargList = self.zipped.transpose()
-
-        self.batchNb = len(self.vidNames)//self.batchSize
-
-        self.currInd = 0
-        return self
-
-    def __next__(self):
-
-        if self.currInd >= len(self.anchList):
-            raise StopIteration
-
-        batchSize = min(self.batchSize,len(self.anchList)-self.currInd)
-
-        videoNames = self.vidNames[self.currInd:self.currInd+batchSize]
-
-        if self.audioLen > 0:
-            audioTens1 = torch.cat(list(map(lambda x: self.readAudio(x,2),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-            audioTens2 = torch.cat(list(map(lambda x: self.readAudio(x,3),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-            audioTens3 = torch.cat(list(map(lambda x: self.readAudio(x,4),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-        else:
-            audioTens1,audioTens2,audioTens3 = None,None,None
-
-        batchTens1 = torch.cat(list(map(lambda x: self.readImage(x,2),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-        batchTens2 = torch.cat(list(map(lambda x: self.readImage(x,3),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-        batchTens3 = torch.cat(list(map(lambda x: self.readImage(x,4),self.zipped[self.currInd:self.currInd+batchSize])),dim=0)
-
-        targ1 = self.anchTargList[self.currInd:self.currInd+batchSize]
-        targ2 = self.posTargList[self.currInd:self.currInd+batchSize]
-        targ3 = self.negTargList[self.currInd:self.currInd+batchSize]
-
-        self.currInd += self.batchSize
-
-        return videoNames,batchTens1,batchTens2,batchTens3,\
-                          audioTens1,audioTens2,audioTens3,\
-                          torch.tensor(targ1.astype(int)),torch.tensor(targ2.astype(int)),torch.tensor(targ3.astype(int))
-
-    def readImage(self,x,i):
-
-        if not x[0] in self.videoDict.keys():
-            self.videoDict[x[0]] = pims.Video(x[0])
-
-        #self.video = pims.Video(x[0])
-
-        #print(x)
-        #print(self.videoDict[x[0]])
-        #print(x[0])
-
-        return self.preproc(self.videoDict[x[0]][int(x[i])]).unsqueeze(0)
-        #return torch.zeros((3,300,300)).unsqueeze(0)
-
-    def readAudio(self,x,i):
-
-        audioPath = os.path.splitext(x[0])[0]+".wav"
-
-        if not audioPath in self.audioDict.keys():
-            tree = ET.parse("../data/{}/{}/result.xml".format(self.dataset,x[1])).getroot()
-            fps = float(tree.find("content").find("head").find("media").find("fps").text)
-            audioData, fs = sf.read(audioPath,dtype='int16')
-            self.audioDict[audioPath] = audioData
-
-            self.fpsDict[audioPath] = fps
-            self.fsDict[audioPath] = fs
-
-        audioData = readAudio(self.audioDict[audioPath],int(x[i]),self.fpsDict[audioPath],self.fsDict[audioPath],self.audioLen)
-
-        return torch.tensor(vggish_input.waveform_to_examples(audioData/32768.0,self.fsDict[audioPath])).unsqueeze(0).float()
 
 class Sampler(torch.utils.data.sampler.Sampler):
     """ The sampler for the SeqTrDataset dataset
@@ -298,20 +41,17 @@ class Sampler(torch.utils.data.sampler.Sampler):
     def __iter__(self):
 
         if self.length > 0:
-            if not self.hmIndList is None:
+            if (not self.hmIndList is None) and self.hmProp>0:
 
                 self.hmIndList = torch.tensor(self.hmIndList).long()
                 self.hmIndList = self.hmIndList[torch.randint(int(self.hmProp*len(self.hmIndList)),(int(self.hmProp*self.length),))]
 
                 self.randIndList = torch.randint(self.nb_videos,(int((1-self.hmProp)*self.length),))
 
-                print("Hm ind",self.hmIndList)
-                print("random ind",self.randIndList)
-
                 self.indList = torch.cat((self.hmIndList,self.randIndList),dim=0)
 
                 self.indList = self.indList.numpy()
-                print(self.indList)
+
                 np.random.shuffle(self.indList)
 
                 return iter(self.indList)
@@ -638,6 +378,74 @@ def framesToShot(scenesBounds,shotBounds):
 
     return gt
 
+def addArgs(argreader):
+
+    argreader.parser.add_argument('--hm_prop', type=float, metavar='N',
+                        help='Proportion of videos that will be re-used during next epoch for hard-mining.')
+
+    argreader.parser.add_argument('--epochs_hm', type=int, metavar='N',
+                        help='The number of epochs to wait before updating the hard mined videos')
+
+    argreader.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
+                        help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
+                            selects one of the two datasets.')
+
+    argreader.parser.add_argument('--batch_size', type=int,metavar='BS',
+                        help='The batchsize to use for training')
+
+    argreader.parser.add_argument('--val_batch_size', type=int,metavar='BS',
+                        help='The batchsize to use for validation')
+
+    argreader.parser.add_argument('--l_min', type=int,metavar='LMIN',
+                        help='The minimum length of a training sequence')
+
+    argreader.parser.add_argument('--l_max', type=int,metavar='LMAX',
+                        help='The maximum length of a training sequence')
+
+    argreader.parser.add_argument('--val_l', type=int,metavar='LMAX',
+                        help='Length of sequences for validation.')
+
+    argreader.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+
+    argreader.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+
+    argreader.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+
+    argreader.parser.add_argument('--img_width', type=int,metavar='WIDTH',
+                        help='The width of the resized images, if resize_image is True, else, the size of the image')
+
+    argreader.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
+                        help='The height of the resized images, if resize_image is True, else, the size of the image')
+
+    argreader.parser.add_argument('--train_part_beg', type=float,metavar='START',
+                        help='The (normalized) start position of the dataset to use for training')
+
+    argreader.parser.add_argument('--train_part_end', type=float,metavar='END',
+                        help='The (normalized) end position of the dataset to use for training')
+
+    argreader.parser.add_argument('--val_part_beg', type=float,metavar='START',
+                        help='The (normalized) start position of the dataset to use for validation')
+
+    argreader.parser.add_argument('--val_part_end', type=float,metavar='END',
+                        help='The (normalized) end position of the dataset to use for validation')
+
+    argreader.parser.add_argument('--test_part_beg', type=float,metavar='START',
+                        help='The (normalized) start position of the dataset to use for testing')
+
+    argreader.parser.add_argument('--test_part_end', type=float,metavar='END',
+                        help='The (normalized) end position of the dataset to use for testing')
+
+    argreader.parser.add_argument('--resize_image', type=args.str2bool, metavar='S',
+                        help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
+
+    argreader.parser.add_argument('--max_shots', type=int,metavar='NOTE',
+                        help="The maximum number of shots to use during an epoch before validating")
+
+    argreader.parser.add_argument('--audio_len', type=float,metavar='NOTE',
+                        help="The length of the audio for each shot (in seconds)")
+
+    return argreader
+
 def main():
 
     #getMiddleFrames("OVSD")
@@ -651,7 +459,6 @@ def main():
         time_start = time.time()
         timeList = np.zeros(nbBatch_max-(not countFirst))
         for batch in trainLoader:
-            #print(batch[0][0].size(),batch[0][1].size(),batch[0][2].size(),batch[0][3])
 
             if not (nbBatch==0 and not countFirst):
                 timeList[nbBatch-(not countFirst)] = time.time()-time_start

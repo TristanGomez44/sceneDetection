@@ -71,100 +71,6 @@ def softTarget(predBatch,targetBatch,width):
 
     return softTargetBatch
 
-def baselineAllVids(dataset,batchSize,visualFeat,audioFeat,pretrainSet,cuda,intervToProcess,audioLen):
-
-    #Extract the middle frame first
-    load_data.getMiddleFrames(dataset,audioLen)
-
-    vidPaths = np.array(sorted(glob.glob("../data/{}/*/middleFrames/".format(dataset))),dtype=str)[intervToProcess]
-
-    for vidPath in vidPaths:
-        print(vidPath)
-
-        imagePathList = np.array(sorted(glob.glob(vidPath+"/*"),key=modelBuilder.findNumbers),dtype=str)
-        imagePathList = list(filter(lambda x:x.find(".wav") == -1,imagePathList))
-
-        if audioFeat != "None":
-            audioPathList = np.array(sorted(glob.glob(vidPath+"/*.wav"),key=modelBuilder.findNumbers),dtype=str)
-        else:
-            audioPathList = None
-
-        diagBlock = modelBuilder.DiagBlock(cuda=cuda,batchSize=batchSize,feat=visualFeat,pretrainDataSet=pretrainSet,audioFeat=audioFeat)
-
-        diagBlock.detectDiagBlock(imagePathList,audioPathList,"test_exp",1)
-
-def epochSiam(model,optim,log_interval,loader, epoch, args,writer,kwargs,mode):
-
-    model.train()
-
-    print("Epoch",epoch," : ",mode)
-
-    total_loss = 0
-    total_posDist = 0
-    total_negDist = 0
-    correct =0
-    repList = None
-
-    if not kwargs["audioModel"] is None:
-        audioModel = kwargs["audioModel"]
-
-    if kwargs["mining_mode"] == "offline":
-
-        for batch_idx, (_,anch,pos,neg,anchAudio,posAudio,negAudio,_,_,_) in enumerate(loader):
-
-            if (batch_idx % log_interval == 0):
-                print("\t",batch_idx+1,"/",loader.batchNb)
-
-            if args.cuda:
-                anch,pos,neg = anch.cuda(),pos.cuda(),neg.cuda()
-
-            anchRep = model(anch)
-            posRep = model(pos)
-            negRep = model(neg)
-
-            if not kwargs["audioModel"] is None:
-
-                if args.cuda:
-                    anchAudio,posAudio,negAudio = anchAudio.cuda(),posAudio.cuda(),negAudio.cuda()
-
-                anchAudRep = audioModel(anchAudio)
-                posAudRep = audioModel(posAudio)
-                negAudRep = audioModel(negAudio)
-
-                anchRep = torch.cat((anchRep,anchAudRep),dim=1)
-                posRep = torch.cat((posRep,posAudRep),dim=1)
-                negRep = torch.cat((negRep,negAudRep),dim=1)
-
-            #Loss
-            p = kwargs["dist_order"]
-            margin = kwargs["margin"]
-            loss = torch.nn.functional.triplet_margin_loss(anchRep, posRep, negRep,margin=margin,p=p)
-
-            posDist = torch.pow(torch.pow(anchRep-posRep,p).sum(dim=1),1/p)
-            negDist = torch.pow(torch.pow(anchRep-negRep,p).sum(dim=1),1/p)
-
-            correct += (posDist < negDist-margin).sum().float()/posDist.size(0)
-
-            total_posDist += posDist.mean()
-            total_negDist += negDist.mean()
-
-            if mode == "train":
-                loss.backward()
-                optim.step()
-                optim.zero_grad()
-            else:
-                loss.backward()
-                optim.zero_grad()
-
-            #Metrics
-            total_loss += loss
-
-    if mode == "train":
-        torch.save(model.state_dict(), "../models/{}/{}_siam_epoch{}".format(args.exp_id,args.model_id, epoch))
-        torch.save(audioModel.state_dict(), "../models/{}/{}_siam_audio_epoch{}".format(args.exp_id,args.model_id, epoch))
-
-    writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batch_idx+1,writer,epoch,mode,args.model_id,args.exp_id)
-
 def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
     ''' Train a model during one epoch
 
@@ -707,7 +613,7 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
                 if cuda:
                     params[key] = params[key].cuda()
 
-                self.state_dict()[key].data += params[key].data -self.state_dict()[key].data
+                net.state_dict()[key].data += params[key].data -net.state_dict()[key].data
 
                 startEpoch = findLastNumbers(init_path_visual_temp)
 
@@ -786,7 +692,6 @@ def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
 
         writer.add_figure(model_id+"_val"+"_"+vidName,fig,firstEpoch)
 
-
 def updateHardMin(hmDict,trainDataset,args):
 
     paths= trainDataset.videoPaths
@@ -805,20 +710,80 @@ def updateHardMin(hmDict,trainDataset,args):
 
     return trainLoader
 
+#Init args
+def addInitArgs(argreader):
+    argreader.parser.add_argument('--start_mode', type=str,metavar='SM',
+                help='The mode to use to initialise the model. Can be \'scratch\' or \'fine_tune\'.')
+    argreader.parser.add_argument('--init_path', type=str,metavar='SM',
+                help='The path to the weight file to use to initialise the network')
+    argreader.parser.add_argument('--init_path_visual', type=str,metavar='SM',
+                help='The path to the weight file to use to initialise the visual model')
+    argreader.parser.add_argument('--init_path_visual_temp', type=str,metavar='SM',
+                help='The path to the weight file to use to initialise the visual and the temporal model')
+    argreader.parser.add_argument('--init_path_audio', type=str,metavar='SM',
+                help='The path to the weight file to use to initialise the audio model')
+    return argreader
+
+#Loss args
+def addLossArgs(argreader):
+    argreader.parser.add_argument('--class_weight', type=float, metavar='S',
+                        help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
+                        makes weights proportional to the class instance number of the other class.')
+    argreader.parser.add_argument('--sparsi_weig', type=float,metavar='LMAX',
+                        help='Weight of the term rewarding the sparsity in the score prediction')
+    argreader.parser.add_argument('--sparsi_wind', type=int,metavar='LMAX',
+                        help='Half-size of the window taken into account for the sparsity term')
+    argreader.parser.add_argument('--sparsi_thres', type=float,metavar='LMAX',
+                        help='Threshold above which the sum of scores in the window is considered too big ')
+    argreader.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
+                        help="To use target soften with a triangular kernel.")
+    argreader.parser.add_argument('--soft_loss_width', type=str2FloatList,metavar='MODE',
+                        help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
+    return argreader
+
+#Optim args
+def addOptimArgs(argreader):
+    argreader.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
+                        help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
+    argreader.parser.add_argument('--momentum', type=float, metavar='M',
+                        help='SGD momentum')
+    argreader.parser.add_argument('--optim', type=str, metavar='OPTIM',
+                        help='the optimizer to use (default: \'SGD\')')
+    return argreader
+
+#Validation arguments
+def addValArgs(argreader):
+    argreader.parser.add_argument('--train_step_to_ignore', type=int,metavar='LMAX',
+                    help='Number of steps that will be ignored at the begining and at the end of the training sequence for binary cross entropy computation')
+    argreader.parser.add_argument('--val_l_temp_overlap', type=int,metavar='LMAX',
+                    help='Size of the overlap between sequences passed to the CNN temp model')
+    argreader.parser.add_argument('--val_l_temp', type=int,metavar='LMAX',help='Length of sequences for computation of scores when using a CNN temp model.')
+
+    argreader.parser.add_argument('--metric_early_stop', type=str,metavar='METR',
+                    help='The metric to use to choose the best model')
+    argreader.parser.add_argument('--maximise_metric', type=str2bool,metavar='BOOL',
+                    help='If true, The chosen metric for chosing the best model will be maximised')
+
+    return argreader
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--baseline', type=int,nargs=2, metavar='N',help='To run the baseline on every video of the dataset. The --dataset argument must\
-                                                                        also be used. The values of the argument are the index of the first and the last video to process.')
-
     argreader.parser.add_argument('--comp_feat', action='store_true',help='To compute and write in a file the features of all images in the test set. All the arguments used to \
                                     build the model and the test data loader should be set.')
-    argreader.parser.add_argument('--train_siam', action='store_true',help='To train a siamese network instead of a CNN-RNN')
     argreader.parser.add_argument('--no_train', action='store_true',help='To use to re-evaluate a model at each epoch after training. At each epoch, the model is not trained but \
                                                                             the weights of the corresponding epoch are loaded and then the model is evaluated')
+
+    argreader = addInitArgs(argreader)
+    argreader = addLossArgs(argreader)
+    argreader = addOptimArgs(argreader)
+    argreader = addValArgs(addValArgs)                                                                     
+
+    argreader = modelBuilder.addArgs(argreader)
+    argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -843,9 +808,7 @@ def main(argv=None):
 
     print("Model :",args.model_id,"Experience :",args.exp_id)
 
-    if args.baseline:
-        baselineAllVids(args.dataset_test,args.batch_size,args.feat,args.feat_audio,args.pretrain_dataset,args.cuda,args.baseline,args.audio_len)
-    elif args.comp_feat:
+    if args.comp_feat:
 
         img_size = (args.img_width,args.img_heigth)
         testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot,args.exp_id)
@@ -904,30 +867,7 @@ def main(argv=None):
             audioLen = 0
         paramToOpti = []
 
-        if args.train_siam:
-
-            trainLoader = load_data.PairLoader(args.dataset_train,args.batch_size,img_size,args.train_part_beg,args.train_part_end,True,audioLen,args.resize_image)
-            valLoader = load_data.PairLoader(args.dataset_val,args.val_batch_size,img_size,args.val_part_beg,args.val_part_end,True,audioLen,args.resize_image)
-
-            net = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
-
-            trainFunc = epochSiam
-            valFunc = epochSiam
-            if args.feat_audio != "None":
-                audioNet = modelBuilder.buildAudioFeatModel(args.feat_audio)
-
-                for p in audioNet.parameters():
-                    paramToOpti.append(p)
-
-            kwargsTr = {'log_interval':args.log_interval,'loader':trainLoader,'args':args,'writer':writer,'mode':'train',\
-                    'margin':args.margin,"dist_order":args.dist_order,"mining_mode":args.mining_mode,"audioModel":audioNet}
-
-            kwargsVal = kwargsTr
-            kwargsVal["mode"] = 'val'
-
-            if args.cuda and args.feat_audio != "None":
-                audioNet = audioNet.cuda()
-        else:
+        if True:
 
             train_dataset = load_data.SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
                                                 (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots)
@@ -978,7 +918,7 @@ def main(argv=None):
         widthCounter = 0
         metricLastVal = None
 
-        if not args.train_siam:
+        if True:
             outDictEpochs = {}
             targDictEpochs = {}
 
@@ -1019,7 +959,7 @@ def main(argv=None):
             else:
                 net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id,epoch)))
 
-            if not args.train_siam:
+            if True:
                 kwargsVal["metricLastVal"] = metricLastVal
                 kwargsVal["width"] = width
                 metricLastVal,outDict,targDict = valFunc(**kwargsVal)
@@ -1027,11 +967,6 @@ def main(argv=None):
                 outDictEpochs[epoch] = outDict
                 targDictEpochs[epoch] = targDict
                 updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
-
-            else:
-                valFunc(**kwargsVal)
-
-            #val(net,optim,valLoader,epoch,args,writer,5)
 
 if __name__ == "__main__":
     main()

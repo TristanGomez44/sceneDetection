@@ -15,6 +15,7 @@ from PIL import Image
 import torch
 import subprocess
 from skimage.transform import resize
+import load_data
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     '''
@@ -666,6 +667,7 @@ def plotScore(exp_id,model_id,dataset_test):
         plt.figure(figsize=(30,5))
         #plt.plot(gt)
         plt.vlines(gtSceneStarts,0,1,linewidths=3,color='gray')
+        plt.hlines([0.5],0,len(scores),linewidths=3,color='red')
 
         plt.plot(scores)
         plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
@@ -697,6 +699,8 @@ def main(argv=None):
 
     argreader.parser.add_argument('--plot_score',action='store_true',help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
                                                                             The model_id argument must be set, along with tge exp_id and the dataset_test arguments.')
+
+    argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
     argreader.getRemainingArgs()

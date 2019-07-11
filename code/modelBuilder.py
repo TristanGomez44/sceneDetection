@@ -23,7 +23,7 @@ import vggish
 import vggish_input
 
 from torch.nn import DataParallel
-
+import args
 import processResults
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
@@ -130,8 +130,6 @@ class FrameAttention(nn.Module):
         x = torch.tanh(self.linear(x))
         attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
         return attWeights
-
-
 
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
@@ -295,7 +293,10 @@ class CNN_sceneDet(nn.Module):
 
                     sceneProp = torch.sigmoid(self.lin(h))
 
-                    scenePropList.append(sceneProp.squeeze(1))
+                    if self.training:
+                        scenePropList.append(sceneProp.squeeze(1))
+                    else:
+                        scenePropList.append(sceneProp.squeeze(1).data)
 
                     parsedProportion += sceneProp.data
 
@@ -317,18 +318,19 @@ class CNN_sceneDet(nn.Module):
 
                 while parsedProportion < 1:
 
-                    res = x.permute(0,2,1)
-                    #print(res.size())
-                    res = nn.functional.interpolate(res, size=self.sceneLenCnnPool,mode='linear')
-                    #print(res.size())
-                    res = res.permute(0,2,1)
+                    xToParse = x[i:i+1,int(parsedProportion*x.size(1)):]
 
-                    print(res.size())
+                    res = xToParse.permute(0,2,1)
+
+                    res = nn.functional.interpolate(res, size=self.sceneLenCnnPool,mode='linear')
+                    res = res.permute(0,2,1)
                     res = res.contiguous().view(res.size(0),res.size(1)*res.size(2))
-                    print(res.size())
                     sceneProp = self.cnnPool(res)
-                    print(sceneProp.size())
-                    scenePropList.append(sceneProp.squeeze(1))
+
+                    if self.training:
+                        scenePropList.append(sceneProp.squeeze(1))
+                    else:
+                        scenePropList.append(sceneProp.squeeze(1).data)
 
                     parsedProportion += sceneProp.data
 
@@ -469,6 +471,64 @@ def netBuilder(args):
                     args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.scene_len_cnn_pool)
 
     return net
+
+def addArgs(argreader):
+
+    argreader.parser.add_argument('--feat', type=str, metavar='N',
+                        help='the net to use to produce feature for each shot')
+
+    argreader.parser.add_argument('--feat_audio', type=str, metavar='N',
+                        help='the net to use to produce audio feature for each shot')
+
+    argreader.parser.add_argument('--frames_per_shot', type=int, metavar='N',
+                        help='The number of frame to use to represent each shot')
+
+    argreader.parser.add_argument('--frame_att_rep_size', type=int, metavar='N',
+                        help='The size of the internal representation of the frame attention model')
+
+    argreader.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
+                        help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
+
+    argreader.parser.add_argument('--scene_len_cnn_pool', type=int, metavar='N',
+                        help='The length of the shot sequence once resampled by the cnn pooling')
+
+    argreader.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
+                        help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
+
+    argreader.parser.add_argument('--hidden_size', type=int,metavar='HS',
+                        help='The size of the hidden layers in the RNN')
+
+    argreader.parser.add_argument('--num_layers', type=int,metavar='NL',
+                        help='The number of hidden layers in the RNN')
+
+    argreader.parser.add_argument('--dropout', type=float,metavar='D',
+                        help='The dropout amount on each layer of the RNN except the last one')
+
+    argreader.parser.add_argument('--bidirect', type=args.str2bool,metavar='BIDIR',
+                        help='If true, the RNN will be bi-bidirectional')
+
+    argreader.parser.add_argument('--train_visual', type=args.str2bool,metavar='BOOL',
+                        help='If true, the visual feature extractor will also be trained')
+
+    argreader.parser.add_argument('--train_audio', type=args.str2bool,metavar='BOOL',
+                        help='If true, the audio feature extractor will also be trained')
+
+    argreader.parser.add_argument('--chan_temp_mod', type=int,metavar='LMAX',
+                        help='The channel number of the temporal model, if it is a CNN')
+
+    argreader.parser.add_argument('--pretr_temp_mod', type=args.str2bool, metavar='S',
+                        help='To have the temporal model pretrained on ImageNet, if it is a CNN')
+
+    argreader.parser.add_argument('--dil_temp_mod', type=int, metavar='S',
+                        help='The dilation of the temporal model convolution if it is a CNN.')
+
+    argreader.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
+                        help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
+
+    argreader.parser.add_argument('--temp_model', type=str,metavar='MODE',
+                        help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
+
+    return argreader
 
 def main():
 
