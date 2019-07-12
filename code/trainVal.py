@@ -1,5 +1,6 @@
 from args import ArgReader
 from args import str2bool
+import args
 import modelBuilder
 import glob
 import numpy as np
@@ -735,15 +736,15 @@ def addLossArgs(argreader):
                         help='Half-size of the window taken into account for the sparsity term')
     argreader.parser.add_argument('--sparsi_thres', type=float,metavar='LMAX',
                         help='Threshold above which the sum of scores in the window is considered too big ')
-    argreader.parser.add_argument('--soft_loss', type=str2bool,metavar='MODE',
+    argreader.parser.add_argument('--soft_loss', type=args.str2bool,metavar='MODE',
                         help="To use target soften with a triangular kernel.")
-    argreader.parser.add_argument('--soft_loss_width', type=str2FloatList,metavar='MODE',
+    argreader.parser.add_argument('--soft_loss_width', type=args.str2FloatList,metavar='MODE',
                         help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
     return argreader
 
 #Optim args
 def addOptimArgs(argreader):
-    argreader.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
+    argreader.parser.add_argument('--lr', type=args.str2FloatList,metavar='LR',
                         help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
     argreader.parser.add_argument('--momentum', type=float, metavar='M',
                         help='SGD momentum')
@@ -761,7 +762,7 @@ def addValArgs(argreader):
 
     argreader.parser.add_argument('--metric_early_stop', type=str,metavar='METR',
                     help='The metric to use to choose the best model')
-    argreader.parser.add_argument('--maximise_metric', type=str2bool,metavar='BOOL',
+    argreader.parser.add_argument('--maximise_metric', type=args.str2bool,metavar='BOOL',
                     help='If true, The chosen metric for chosing the best model will be maximised')
 
     return argreader
@@ -780,7 +781,7 @@ def main(argv=None):
     argreader = addInitArgs(argreader)
     argreader = addLossArgs(argreader)
     argreader = addOptimArgs(argreader)
-    argreader = addValArgs(addValArgs)                                                                     
+    argreader = addValArgs(argreader)
 
     argreader = modelBuilder.addArgs(argreader)
     argreader = load_data.addArgs(argreader)
@@ -811,7 +812,8 @@ def main(argv=None):
     if args.comp_feat:
 
         img_size = (args.img_width,args.img_heigth)
-        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),args.audio_len,args.resize_image,args.frames_per_shot,args.exp_id)
+        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),\
+                                          args.audio_len,args.resize_image,args.frames_per_shot,args.exp_id,args.random_frame_val)
 
         if args.feat != "None":
             featModel = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
@@ -876,7 +878,8 @@ def main(argv=None):
                               pin_memory=False,num_workers=args.num_workers)
 
             valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
-                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id)
+                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,\
+                                                args.frames_per_shot,args.exp_id,args.random_frame_val)
 
             #Building the net
             net = modelBuilder.netBuilder(args)
