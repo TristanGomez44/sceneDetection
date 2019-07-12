@@ -161,14 +161,13 @@ class SeqTrDataset(torch.utils.data.Dataset):
         try:
             zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
         except ValueError:
-            print(vidName,len(shotInds),len(gt))
+            print("Error : ",vidName,"len(shotInds)",len(shotInds),"len(gt)",len(gt))
             sys.exit(0)
 
         np.random.shuffle(zipped)
         zipped = zipped[:self.lMax]
 
         if len(zipped) < self.lMax:
-
             repeatedShotInd = np.random.randint(len(zipped),size=self.lMax-len(zipped))
             zipped = np.concatenate((zipped,zipped[repeatedShotInd]),axis=0)
 
@@ -233,7 +232,7 @@ class TestLoader():
     - exp_id (str): the name of the experience
     '''
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id,randomFrame):
         self.evalL = evalL
         self.dataset = dataset
         self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
@@ -241,6 +240,7 @@ class TestLoader():
         self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.framesPerShot = framesPerShot
+        self.randomFrame = randomFrame
 
         self.exp_id = exp_id
 
@@ -255,6 +255,8 @@ class TestLoader():
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+
+
 
     def __iter__(self):
         self.videoInd = 0
@@ -280,7 +282,13 @@ class TestLoader():
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
 
-        frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
+        if not self.randomFrame:
+            frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
+        else:
+            shotBoundsToUse = torch.tensor(shotBounds[shotInds.astype(int)]).float()
+            frameInds = torch.distributions.uniform.Uniform(shotBoundsToUse[:,0], shotBoundsToUse[:,1]+1).sample((self.framesPerShot,)).long()
+            frameInds = frameInds.transpose(dim0=0,dim1=1)
+            frameInds = np.array(frameInds.contiguous().view(-1))
 
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
@@ -302,7 +310,7 @@ class TestLoader():
         else:
             self.shotInd += L
 
-        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName,torch.tensor(frameInds)
+        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName,torch.tensor(frameInds).int()
 
     def regularlySpacedFrames(self,shotBounds):
         ''' Select several frame indexs regularly spaced in each shot '''
@@ -382,67 +390,48 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--hm_prop', type=float, metavar='N',
                         help='Proportion of videos that will be re-used during next epoch for hard-mining.')
-
     argreader.parser.add_argument('--epochs_hm', type=int, metavar='N',
                         help='The number of epochs to wait before updating the hard mined videos')
-
     argreader.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                         help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                             selects one of the two datasets.')
-
     argreader.parser.add_argument('--batch_size', type=int,metavar='BS',
                         help='The batchsize to use for training')
-
     argreader.parser.add_argument('--val_batch_size', type=int,metavar='BS',
                         help='The batchsize to use for validation')
-
     argreader.parser.add_argument('--l_min', type=int,metavar='LMIN',
                         help='The minimum length of a training sequence')
-
     argreader.parser.add_argument('--l_max', type=int,metavar='LMAX',
                         help='The maximum length of a training sequence')
-
     argreader.parser.add_argument('--val_l', type=int,metavar='LMAX',
                         help='Length of sequences for validation.')
-
     argreader.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-
     argreader.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-
     argreader.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-
     argreader.parser.add_argument('--img_width', type=int,metavar='WIDTH',
                         help='The width of the resized images, if resize_image is True, else, the size of the image')
-
     argreader.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
                         help='The height of the resized images, if resize_image is True, else, the size of the image')
-
     argreader.parser.add_argument('--train_part_beg', type=float,metavar='START',
                         help='The (normalized) start position of the dataset to use for training')
-
     argreader.parser.add_argument('--train_part_end', type=float,metavar='END',
                         help='The (normalized) end position of the dataset to use for training')
-
     argreader.parser.add_argument('--val_part_beg', type=float,metavar='START',
                         help='The (normalized) start position of the dataset to use for validation')
-
     argreader.parser.add_argument('--val_part_end', type=float,metavar='END',
                         help='The (normalized) end position of the dataset to use for validation')
-
     argreader.parser.add_argument('--test_part_beg', type=float,metavar='START',
                         help='The (normalized) start position of the dataset to use for testing')
-
     argreader.parser.add_argument('--test_part_end', type=float,metavar='END',
                         help='The (normalized) end position of the dataset to use for testing')
-
     argreader.parser.add_argument('--resize_image', type=args.str2bool, metavar='S',
                         help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
-
     argreader.parser.add_argument('--max_shots', type=int,metavar='NOTE',
                         help="The maximum number of shots to use during an epoch before validating")
-
     argreader.parser.add_argument('--audio_len', type=float,metavar='NOTE',
                         help="The length of the audio for each shot (in seconds)")
+    argreader.parser.add_argument('--random_frame_val', type=args.str2bool, metavar='N',
+                        help='If true, random frames instead of middle frames will be used as key frame during validation. ')
 
     return argreader
 
