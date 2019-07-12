@@ -67,7 +67,6 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
             featModel = resnetSeg.ResnetSeg(orig_resnet)
 
             featModel.load_state_dict(torch.load("../models/resnet50_ADE20K.pth"))
-
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
@@ -76,6 +75,14 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
         if pretrainDataSet == "imageNet":
             featModel = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut)
             featModel.load_state_dict(torch.load("../models/resnet101_imageNet.pth"))
+        else:
+            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
+
+    elif featModelName == "resnet18":
+
+        if pretrainDataSet == "imageNet":
+            featModel = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut)
+            featModel.load_state_dict(torch.load("../models/resnet18_imageNet.pth"))
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
