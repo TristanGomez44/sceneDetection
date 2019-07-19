@@ -19,8 +19,7 @@ from skimage.transform import resize
 import sys
 import shotdetect
 import shutil
-
-CV_DEF_FPS = 30
+import pims
 
 def main(argv=None):
 
@@ -28,84 +27,18 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--csv_path', type=str, metavar='N',help='To format the csv file send by the IBM researcher. The value is the path to the csv.')
-    argreader.parser.add_argument('--annot_fold', type=str, metavar='N',help='To format the annotations file. The value is the path to the annotations folder')
-    argreader.parser.add_argument('--base_fold', type=str, metavar='N',help='To format the baseline file. The value is the path to the baseline folder')
     argreader.parser.add_argument('--dataset', type=str, metavar='N',help='The dataset')
     argreader.parser.add_argument('--merge_videos',type=str, metavar='EXT',help='Accumulate the clips from a folder to obtain one video per movie in the dataset. The value \
                                     is the extension of the video files, example : \'avi\'.')
     argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube and the youtube_large datasets. Put the clips into separate folder')
     argreader.parser.add_argument('--format_bbc',action='store_true',help='Format the bbc dataset')
+    argreader.parser.add_argument('--format_ovsd',action='store_true',help='Format the OVSD dataset')
+    argreader.parser.add_argument('--shot_thres',type=float, default=0.1,metavar='EXT',help='The detection threshold for the shot segmentation done by ffmpeg')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
     args = argreader.args
-
-    if args.csv_path:
-        csv = np.genfromtxt(args.csv_path,dtype=str,delimiter=",")
-
-        for j in range(len(csv[0])):
-
-            #Computing scene boundaries with frame number
-            scenesF = csv[1:,j]
-            scenesF = scenesF[scenesF != ''].astype(int)
-            scenesF = np.concatenate(([-1],scenesF),axis=0)
-
-            lastFrameInd = np.genfromtxt("../data/{}/annotations/{}_frames_scenes.csv".format(args.dataset,csv[0,j]))[-1,1]+1
-
-            #Getting the predicted scenes bounds
-            scenesF = np.concatenate((scenesF,[lastFrameInd]),axis=0)
-            scenesF = np.concatenate((scenesF[:-1,np.newaxis]+1,scenesF[1:,np.newaxis]),axis=1)
-
-            filePath = os.path.dirname(args.csv_path)+"/"+csv[0,j]+"_frames_truebasecuts.csv"
-            np.savetxt(filePath,scenesF)
-
-            scenesS = processResults.frame_to_shots(args.dataset,csv[0,j],scenesF)
-
-            filePath = os.path.dirname(args.csv_path)+"/"+csv[0,j]+"_truebasecuts.csv"
-            print(filePath)
-            np.savetxt(filePath,scenesS)
-
-    if args.annot_fold:
-
-        annotFilePaths = glob.glob(args.annot_fold+"/*_scenes.txt")
-
-        for annotFilePath in annotFilePaths:
-
-            pos = os.path.basename(annotFilePath).find("_scenes.txt")
-            vidName = os.path.basename(annotFilePath)[:pos]
-
-            scenesF = np.genfromtxt(annotFilePath)
-
-            #renaming the old annotation file
-            newFilePath = args.annot_fold+"/"+vidName+"_frames_scenes.csv"
-            os.rename(annotFilePath,newFilePath)
-
-            #scenesS = processResults.frame_to_shots(args.dataset,vidName,scenesF)
-
-            #filePath = args.annot_fold+"/"+vidName+"_scenes.csv"
-            #np.savetxt(baseFilePath,scenesS)
-
-    if args.base_fold:
-
-        baseFilePaths = glob.glob(args.base_fold+"/*_baseline.csv")
-
-        for baseFilePath in baseFilePaths:
-
-            pos = os.path.basename(baseFilePath).find("_baseline.csv")
-            vidName = os.path.basename(baseFilePath)[:pos]
-            #print(vidName)
-            scenesF = np.genfromtxt(baseFilePath)
-            #print(baseFilePath)
-            #renaming the old baseline file
-            newFilePath = args.base_fold+"/"+vidName+"_shots_baseline.csv"
-            os.rename(baseFilePath,newFilePath)
-
-            scenesS = processResults.shots_to_frames(args.dataset,vidName,scenesF)
-
-            filePath = args.base_fold+"/"+vidName+"_baseline.csv"
-            np.savetxt(baseFilePath,scenesS)
 
     if args.format_youtube and args.dataset == "youtube":
 
@@ -260,6 +193,7 @@ def main(argv=None):
 
                     #Getting the number of frames of the video
                     subprocess.call("ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(videoPath),shell=True)
+
                     nbFrames = np.genfromtxt("nbFrames.txt")
 
                     fps = processResults.getVideoFPS(videoPath)
@@ -305,14 +239,8 @@ def main(argv=None):
             #Detecting shots
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
-                shotBoundsTime = shotdetect.extract_shots_with_ffprobe(accVidPath.replace("_tmp",""))
-                fps = processResults.getVideoFPS(accVidPath.replace("_tmp",""))
-                shotBoundsFrame = (np.array(shotBoundsTime)*fps).astype(int)
 
-                frameNb = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName))[-1,1]
-                starts = np.concatenate(([0],shotBoundsFrame),axis=0)
-                ends = np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
-                shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
+                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.dataset,args.shot_thres)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
             #Remove the temporary wav files:
@@ -362,19 +290,81 @@ def main(argv=None):
             #Extract audio
             extractAudio(newPath)
 
-            #Extract shots
-            rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
-            shotCSV = removeHoles(rawShotCSV)
-            np.savetxt(videoFold+"/result.csv",shotCSV)
+            if not os.path.exists(videoFold+"/result.csv"):
+                #Extract shots
+                rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
+                shotCSV = removeHoles(rawShotCSV)
+
+                subprocess.call("ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(newPath),shell=True)
+                nbFrames = np.genfromtxt("nbFrames.txt")
+
+                shotCSV[-1,1] = nbFrames-1
+
+                np.savetxt(videoFold+"/result.csv",shotCSV)
+            else:
+                shotCSV = np.genfromtxt(videoFold+"/result.csv")
 
             #Extract scenes:
-            starts = np.genfromtxt(rawSceneFilePaths[i],delimiter=",").transpose()
-            print(rawSceneFilePaths[i],starts)
-            shotNb = len(rawShotCSV)
-            ends = np.concatenate((starts[1:]-1,[shotNb]),axis=0)
+            starts = np.genfromtxt(rawSceneFilePaths[i],delimiter=",")[:-1]
+            print(starts)
+
+            shotNb = len(shotCSV)
+            ends = np.concatenate((starts[1:]-1,[shotNb-1]),axis=0)
             starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
-            scenes = np.concatenate((starts,ends),axis=1)
-            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenes)
+            #The scene boundaries expressed with shot index
+            scenesS = np.concatenate((starts,ends),axis=1)
+            #The scene boundaries expressed with frame index
+            scenesF = processResults.shots_to_frames("../data/bbc/{}/result.xml".format(vidName),scenesS)
+
+            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
+
+    if args.format_ovsd:
+
+        videosPaths = sorted(glob.glob("../data/OVSD/*.*"),key=lambda x:os.path.basename(x).lower())
+        videosPaths = list(filter(lambda x:x.find(".wav") == -1,videosPaths))
+
+        rawSceneFilePaths = sorted(glob.glob("../data/OVSD/annotations/*_scenes.txt"),key=lambda x:os.path.basename(x).lower())
+
+        for i,path in enumerate(videosPaths):
+
+            print(path,rawSceneFilePaths[i])
+
+            vidName = os.path.basename(os.path.splitext(path)[0])
+
+            fps = processResults.getVideoFPS(path)
+            frameNb = int(float(pims.Video(path)._duration)*fps)-1
+
+            #Removing holes in scenes segmentation
+            rawSceneCSV = np.genfromtxt(rawSceneFilePaths[i])
+            sceneCSV = removeHoles(rawSceneCSV)
+            sceneCSV[-1,1] = frameNb
+            np.savetxt(rawSceneFilePaths[i],sceneCSV)
+
+            #Extract shots
+            if not os.path.exists("../data/OVSD/{}/result.csv".format(vidName)):
+                shotBoundsFrame = detect_format_shots(path,'OVSD',args.shot_thres,frameNb,fps)
+                if not os.path.exists("../data/OVSD/{}/".format(vidName)):
+                    os.makedirs("../data/OVSD/{}/".format(vidName))
+                np.savetxt("../data/OVSD/{}/result.csv".format(vidName),shotBoundsFrame)
+
+            #Extract audio
+            extractAudio(path)
+
+def detect_format_shots(path,dataset,shot_thres,frameNb,fps):
+
+    vidName = os.path.basename(os.path.splitext(path)[0])
+
+    #Detecting shots
+    shotBoundsTime = shotdetect.extract_shots_with_ffprobe(path,threshold=shot_thres)
+
+    #Shot boundaries as a function of frame index instead of time
+    shotBoundsFrame = (np.array(shotBoundsTime)*fps).astype(int)
+
+    starts = np.concatenate(([0],shotBoundsFrame),axis=0)
+    ends = np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
+    shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
+
+    return shotBoundsFrame
 
 def removeHoles(csvFile):
 
