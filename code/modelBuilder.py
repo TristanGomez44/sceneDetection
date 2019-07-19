@@ -13,6 +13,7 @@ import os
 import time
 
 import resnet
+import densenet
 import resnetSeg
 import googleNet
 from torch.nn import functional as F
@@ -205,7 +206,7 @@ class CNN_sceneDet(nn.Module):
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,sceneLenCnnPool=0):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,sceneLenCnnPool=0,auxModel=False):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -218,6 +219,8 @@ class CNN_sceneDet(nn.Module):
         elif modelType == "resnet18":
             self.cnn = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
             expansion = 1
+        elif modelType == "densenet121":
+            self.cnn = densenet.densenet121(poolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,inChan=3)
         else:
             raise ValueError("Unkown model type for CNN temporal model : ",modelType)
 
@@ -229,8 +232,13 @@ class CNN_sceneDet(nn.Module):
                 raise ValueError("To load the pretrained weights, the CNN temp model should have 64 channels and not {}".format(chan))
 
             checkpoint = torch.load("../models/{}_imageNet.pth".format(modelType))
-            state_dict = {"module."+k: v for k,v in checkpoint.items()}
-            self.cnn.load_state_dict(state_dict)
+
+            if modelType.find("densenet") != -1:
+                state_dict = {"module."+k: v for k,v in checkpoint.items()}
+                densenet._load_state_dict(self.cnn,state_dict)
+            else:
+                state_dict = {"module."+k: v for k,v in checkpoint.items()}
+                self.cnn.load_state_dict(state_dict)
 
         self.pool = pool
         self.featNb = 2048
@@ -246,6 +254,10 @@ class CNN_sceneDet(nn.Module):
             self.scoreConv = None
 
         if self.pool == 'linear':
+
+            if modelType.find("dense") != -1:
+                raise NotImplementedError("Can't use densenet and fully connected layer pooling.")
+
             self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
         elif self.pool == 'lstm':
 
@@ -259,6 +271,7 @@ class CNN_sceneDet(nn.Module):
     def forward(self,x,gt=None,attList=None):
 
         x = self.cnn(x)
+
         x = x.permute(0,2,1,3)
 
         if self.pool == "mean":
@@ -310,7 +323,6 @@ class CNN_sceneDet(nn.Module):
                 batchSceneProp.append(torch.cat(scenePropList,dim=0))
 
             return batchSceneProp
-
         elif self.pool == "cnn":
 
             #print(x.size())
@@ -389,8 +401,12 @@ class SceneDet(nn.Module):
         #thrown if the model type is unkown
         if featModelName=="resnet50" or featModelName=="resnet101":
             nbFeat = 256*2**(layFeatCut-1)
+        elif featModelName=="resnet18":
+            nbFeat = 64*2**(layFeatCut-1)
         elif featModelName=="googLeNet":
             nbFeat = 1024
+        else:
+            raise ValueError("Unkown feat model type : ",featModelName)
 
         if not self.audioFeatModel is None:
             nbFeat += 128
@@ -399,7 +415,7 @@ class SceneDet(nn.Module):
 
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
-        elif self.temp_model.find("resnet") != -1:
+        elif self.temp_model.find("net") != -1:
             self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,sceneLenCnnPool=sceneLenCnnPool)
 
         self.nb_gpus = torch.cuda.device_count()
@@ -449,7 +465,7 @@ class SceneDet(nn.Module):
 
         if self.temp_model == "RNN":
             return self.tempModel(x,h,c)
-        elif self.temp_model.find("resnet") != -1:
+        elif self.temp_model.find("net") != -1:
             x = x.unsqueeze(1)
             x = x.expand(x.size(0),x.size(1)*3,x.size(2),x.size(3))
             return self.tempModel(x,gt,attList)
