@@ -256,8 +256,6 @@ class TestLoader():
             videoFold = os.path.splitext(videoPath)[0]
             self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
-
-
     def __iter__(self):
         self.videoInd = 0
         self.shotInd = 0
@@ -293,7 +291,11 @@ class TestLoader():
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
-        frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
+        try:
+            frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
+        except IndexError:
+            print(vidName,"max frame",frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
+            sys.exit(0)
 
         if self.audioLen > 0:
             audioData, fs = sf.read(os.path.splitext(videoPath)[0]+".wav")
@@ -302,7 +304,7 @@ class TestLoader():
         else:
             audioSeq = None
 
-        gt = getGT(self.dataset,vidName)[self.shotInd:self.shotInd+L]
+        gt = getGT(self.dataset,vidName)[self.shotInd:min(self.shotInd+L,len(shotBounds))]
 
         if shotInds[-1] + 1 == len(shotBounds):
             self.shotInd = 0
