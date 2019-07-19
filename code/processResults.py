@@ -16,6 +16,7 @@ import torch
 import subprocess
 from skimage.transform import resize
 import load_data
+import modelBuilder
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     '''
@@ -162,6 +163,47 @@ def binaryToMetrics(pred,target):
 
     return cov_val,overflow_val,iou_val
 
+def binaryToIoUs(pred,target):
+    ''' Computes the IoU of a predicted scene segmentation using a gt and a prediction encoded in binary format
+
+    This computes IoU relative to prediction and to ground truth and also computes the mean of the two. \
+
+    Args:
+    - pred (list): the predicted scene segmentation. It is a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
+                    the shot is the first shot of a new scene.
+    - target (list): the ground truth scene segmentation. Formated the same way as pred.
+
+
+    '''
+
+    predBounds = []
+    targBounds = []
+
+    for i in range(len(pred)):
+
+        pred_bounds = binaryToSceneBounds(pred[i])
+        targ_bounds = binaryToSceneBounds(target[i])
+
+        #print("pred",pred_bounds)
+        #print("targ",targ_bounds)
+
+        if len(targ_bounds) > 1:
+            predBounds.append(pred_bounds)
+            targBounds.append(targ_bounds)
+
+    iou,iou_pred,iou_gt = 0,0,0
+    for pred,targ in zip(predBounds,targBounds):
+
+        iou_pred += IoU_oneRef(np.array(targ),np.array(pred))
+        iou_gt += IoU_oneRef(np.array(pred),np.array(targ))
+        iou += iou_pred*0.5+iou_gt*0.5
+
+    iou_pred /= len(targBounds)
+    iou_gt /= len(targBounds)
+    iou /= len(targBounds)
+
+    return iou,iou_pred,iou_gt
+
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
                 into a list of intervals i.e. a scene boundary array relative to shot index
@@ -203,10 +245,10 @@ def scenePropToBinary(sceneProps,shotNb):
 
     return binary
 
-def frame_to_shots(dataset,vidName,scenesF):
+def frame_to_shots(dataset,pathToXml,scenesF):
     ''' Computes scene boundaries relative with shot index instead of frame index '''
 
-    shotsF = xmlToArray(dataset,vidName)
+    shotsF = xmlToArray(pathToXml)
 
     #Computing scene boundaries with shot number instead of frame
     scenesS = []
@@ -232,16 +274,15 @@ def frame_to_shots(dataset,vidName,scenesF):
 
     return scenesS
 
-def shots_to_frames(dataset,vidName,scenesS):
+def shots_to_frames(pathToXml,scenesS):
     ''' Computes scene boundaries file with frame index instead of shot index '''
 
-    shotsF = xmlToArray(dataset,vidName)
+    shotsF = xmlToArray(pathToXml)
 
     scenes_startF = shotsF[:,0][scenesS[:,0].astype(int)]
     scenes_endF = shotsF[:,1][scenesS[:,1].astype(int)]
 
     scenesF = np.concatenate((scenes_startF[:,np.newaxis],scenes_endF[:,np.newaxis]),axis=1)
-    #sys.exit(0)
 
     return scenesF
 
@@ -498,7 +539,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
     print(videoPath)
-    shotFrames = xmlToArray("../data/{}/{}/result.xml".format(dataset,videoName))
+    shotFrames = xmlToArray("../data/{}/{}/result.xml".format(dataset))
 
     cap = cv2.VideoCapture(videoPath)
     print(cap)
@@ -597,7 +638,7 @@ def getVideoFPS(videoPath,exp_id=None):
             for info in line.split(","):
 
                 if info.find("fps") != -1:
-                    fps = round(float(info.replace(" ","").replace("fps","")))
+                    fps = float(info.replace(" ","").replace("fps",""))
 
     if fps is None:
         raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
@@ -617,7 +658,6 @@ def convScoPlot(weightFile):
     paramDict = torch.load(weightFile)
 
     for key in paramDict.keys():
-
         if key.find("scoreConv.weight") != -1:
             weight =  paramDict[key]
 
@@ -629,8 +669,6 @@ def convScoPlot(weightFile):
 
     out = torch.nn.functional.conv1d(inp, weight,padding=weight.size(-1)//2)[0,0].cpu().detach().numpy()
 
-    print(out.shape)
-
     plt.figure()
     plt.title("Impulse response of {} score filter".format(model_id))
     plt.xlabel("Time")
@@ -640,8 +678,6 @@ def convScoPlot(weightFile):
 
     fft = np.abs(np.fft.fft(out))[:inSize//2]
 
-    print(fft.shape)
-
     plt.figure()
     plt.title("Fourrier transform of {} score filter".format(model_id))
     plt.xlabel("frequency")
@@ -650,27 +686,206 @@ def convScoPlot(weightFile):
     plt.plot(fft)
     plt.savefig("../vis/{}/model{}_epoch{}_fourrier.png".format(exp_id,model_id,epoch))
 
-def plotScore(exp_id,model_id,dataset_test):
+def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_beg,test_part_end):
 
     resFilePaths = sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)))
 
+    videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset_test)))))
+    videoPaths = list(filter(lambda x:x.find(".xml") == -1,videoPaths))
+    videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
+    videoPaths = np.array(videoPaths)[int(test_part_beg*len(videoPaths)):int(test_part_end*len(videoPaths))]
+    videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
+
     for path in resFilePaths:
 
-        fileName = os.path.basename(os.path.splitext(path)[0])
-        videoName = fileName.split("_")[-1]
+        videoName = None
+        for candidateVideoName in videoNames:
+            if "_"+candidateVideoName.replace("__","_")+".csv" in path:
+                videoName = candidateVideoName
 
-        scores = np.genfromtxt(path)[:,1]
-        gt = np.zeros(len(scores)+1)
-        gtSceneStarts = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset_test,videoName))[:,0].astype(int)
-        gt[gtSceneStarts] = 1
+        if not videoName is None:
+            fileName = os.path.basename(os.path.splitext(path)[0])
 
-        plt.figure(figsize=(30,5))
-        #plt.plot(gt)
-        plt.vlines(gtSceneStarts,0,1,linewidths=3,color='gray')
-        plt.hlines([0.5],0,len(scores),linewidths=3,color='red')
+            scores = np.genfromtxt(path)[:,1]
 
-        plt.plot(scores)
-        plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
+            #gt = np.zeros(len(scores))
+            #gtScenes = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset_test,videoName))
+            #gtSceneStarts = np.array(frame_to_shots(dataset_test,"../data/{}/{}/result.xml".format(dataset_test,videoName),gtScenes))[:,0].astype(int)
+            #gt[gtSceneStarts] = 1
+
+            gt = load_data.getGT(dataset_test,videoName)
+
+            fig = plt.figure(figsize=(30,5))
+            ax1 = fig.add_subplot(111)
+            ax2 = ax1.twinx()
+
+            legHandles = []
+
+            #Plot the ground truth transitions
+            ax1.vlines(gt.nonzero(),0,1,linewidths=3,color='gray')
+
+            #Plot the decision threshold
+            ax1.hlines([0.5],0,len(scores),linewidths=3,color='red')
+
+            #Plot the scores
+            legHandles += ax1.plot(np.arange(len(scores)),scores,color="blue",label="Scene change score")
+
+            #Getting the epoch using the path
+            epoch = modelBuilder.findNumbers(path[path.find("epoch")+5:].split("_")[0])
+
+            #Plot the distance between the successive trained features
+            legHandles = plotFeat(exp_id,model_id,videoName,len(scores),"orange","Distance between shot trained representations",legHandles,ax2)
+            legHandles = plotFeat(exp_id_init,model_id_init,videoName,len(scores),"green","Distance between untrained shot representations",legHandles,ax2)
+
+            legend = fig.legend(handles=legHandles, loc='center right' ,title="")
+            fig.gca().add_artist(legend)
+
+            plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
+            sys.exit(0)
+        else:
+            raise ValueError("Unkown video : ",path)
+
+def plotFeat(exp_id,model_id,videoName,nbShots,color,label,legHandles,ax):
+    featPaths = sorted(glob.glob("../results/{}/{}/*_{}.csv".format(exp_id,videoName,model_id)),key=modelBuilder.findNumbers)
+    feats = np.array(list(map(lambda x:np.genfromtxt(x),featPaths)))
+    dists = np.sqrt(np.power(feats[:-1]-feats[:1],2).sum(axis=1))
+    legHandles += ax.plot(np.arange(nbShots-1)+1,dists,color=color,label=label)
+
+    return legHandles
+
+def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
+
+    videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset_test)))))
+    videoPaths = list(filter(lambda x:x.find(".xml") == -1,videoPaths))
+    videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
+    videoPaths = np.array(videoPaths)[int(test_part_beg*len(videoPaths)):int(test_part_end*len(videoPaths))]
+    videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
+    videoNameDict = {}
+
+    for path in resFilePaths:
+        for videoName in videoNames:
+            if "_"+videoName.replace("__","_")+".csv" in path.replace("__","_"):
+                videoNameDict[path] = videoName
+
+        if path not in videoNameDict.keys():
+            raise ValueError("The path "+" "+path+" "+"doesnt have a video name")
+
+    return videoNameDict
+
+def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoch,lastEpoch):
+
+    resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)),key=modelBuilder.findNumbers))
+
+    if firstEpoch is None:
+        firstEpoch = modelBuilder.findNumbers(resFilePaths[0][resFilePaths[0].find("epoch")+5:].split("_")[0])
+
+    if lastEpoch is None:
+        lastEpoch = modelBuilder.findNumbers(resFilePaths[-1][resFilePaths[-1].find("epoch")+5:].split("_")[0])
+
+    #If there's only one epoch to plot, theres only one point to plot which is why the marker has to be visible
+    if firstEpoch == lastEpoch:
+        mark = "o"
+    else:
+        mark = ","
+
+    videoNameDict = buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths)
+
+    resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
+
+    thresList = np.array([0.5,0.6,0.65,0.7,0.75,0.8])
+    #thresList = np.arange(10)/10
+
+    iouArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
+    iouArr_pred,iouArr_gt = iouArr.copy(),iouArr.copy()
+
+    cmap = cm.rainbow(np.linspace(0, 1, len(thresList)))
+
+    fig = plt.figure(1,figsize=(13,8))
+    ax = fig.add_subplot(111)
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.7, box.height])
+
+    fig_pred = plt.figure(2,figsize=(13,8))
+    ax_pred = fig_pred.add_subplot(111)
+    box = ax_pred.get_position()
+    ax_pred.set_position([box.x0, box.y0, box.width * 0.7, box.height])
+
+    fig_gt = plt.figure(3,figsize=(13,8))
+    ax_gt = fig_gt.add_subplot(111)
+    box = ax_gt.get_position()
+    ax_gt.set_position([box.x0, box.y0, box.width * 0.7, box.height])
+
+    for i,thres in enumerate(thresList):
+        print(thres)
+
+        for k in range(lastEpoch-firstEpoch+1):
+
+            resFilePaths = sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,k+firstEpoch)),key=modelBuilder.findNumbers)
+
+            iou_mean,iou_pred_mean,iou_gt_mean = 0,0,0
+
+            print("Epoch",k+firstEpoch,len(resFilePaths)," videos")
+
+            for j,path in enumerate(resFilePaths):
+
+                fileName = os.path.basename(os.path.splitext(path)[0])
+                videoName = videoNameDict[path]
+
+                gt = load_data.getGT(dataset_test,videoName)
+                #gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset_test,videoName)).astype(int)
+                scores = np.genfromtxt(path)[:,1]
+
+                pred = (scores > thres)
+
+                iou,iou_pred,iou_gt = binaryToIoUs(pred[np.newaxis,:],gt[np.newaxis,:])
+
+                iou_mean += iou
+                iou_pred_mean += iou_pred
+                iou_gt_mean += iou_gt
+
+            iouArr[i,k] = iou_mean/len(resFilePaths)
+            iouArr_pred[i,k] = iou_pred_mean/len(resFilePaths)
+            iouArr_gt[i,k] = iou_gt_mean/len(resFilePaths)
+
+        ax.plot(np.arange(firstEpoch,lastEpoch+1),iouArr[i],label=thres,color=cmap[i], marker=mark)
+        ax_pred.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_pred[i],label=thres,color=cmap[i],marker=mark)
+        ax_gt.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_gt[i],label=thres,color=cmap[i],marker=mark)
+
+    plt.figure(1,figsize=(13,8))
+    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("IoU")
+    ax.set_ylim(0,1)
+
+    plt.figure(2,figsize=(13,8))
+    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
+    ax_pred.set_xlabel("Epoch")
+    ax_pred.set_ylabel("IoU pred")
+    ax_pred.set_ylim(0,1)
+
+    plt.figure(3,figsize=(13,8))
+    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
+    ax_gt.set_xlabel("Epoch")
+    ax_gt.set_ylabel("IoU gt")
+    ax_gt.set_ylim(0,1)
+
+    if not os.path.exists("../vis/{}".format(exp_id)):
+        os.makedirs("../vis/{}".format(exp_id))
+
+    fig.savefig("../vis/{}/model{}_iouThres.png".format(exp_id,model_id))
+    fig_pred.savefig("../vis/{}/model{}_iouPredThres.png".format(exp_id,model_id))
+    fig_gt.savefig("../vis/{}/model{}_iouGTThres.png".format(exp_id,model_id))
+
+    bestInd = np.argmax(iouArr)
+    bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
+
+    print(iouArr.shape,bestInd)
+
+    print("Best threshold : ",thresList[bestThresInd])
+    print("Best epoch : ",bestEpochInd+firstEpoch)
+
+    print("Best IoU's : ")
+    print(iouArr[bestThresInd])
 
 def main(argv=None):
 
@@ -697,8 +912,14 @@ def main(argv=None):
     argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
     argreader.parser.add_argument('--conv_sco_plot',type=str,help='To plot the frequency response of the 1D filter learned by a model filtering its scores. The value is the path to the weight file.')
 
-    argreader.parser.add_argument('--plot_score',action='store_true',help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
-                                                                            The model_id argument must be set, along with tge exp_id and the dataset_test arguments.')
+    argreader.parser.add_argument('--plot_score',type=str,nargs=2,help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
+                                                                            The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments.\
+                                                                            The values of this arg are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
+
+    argreader.parser.add_argument('--eval_model',type=int,nargs="*",help='To evaluate a model and plot the mean IoU as a function of the score threshold.\
+                                    The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments. \
+                                    The values of this args can be the epochs at which to start and end the plot. If these are not indicated, the minimum and maximum\
+                                    possible epoch value will be used.')
 
     argreader = load_data.addArgs(argreader)
 
@@ -714,7 +935,6 @@ def main(argv=None):
         comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed,args.frames_per_shot)
-
     if args.score_vis_video:
         scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
     if args.plot_cat_repr:
@@ -722,7 +942,11 @@ def main(argv=None):
     if args.conv_sco_plot:
         convScoPlot(args.conv_sco_plot)
     if args.plot_score:
-        plotScore(args.exp_id,args.model_id,args.dataset_test)
+        plotScore(args.exp_id,args.model_id,args.plot_score[0],args.plot_score[1],args.dataset_test,args.test_part_beg,args.test_part_end)
+    if args.eval_model:
+        epochStart = args.eval_model[0] if len(args.eval_model) == 2 else None
+        epochEnd = args.eval_model[1] if len(args.eval_model) == 2 else None
+        evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd)
 
 if __name__ == "__main__":
     main()
