@@ -772,7 +772,7 @@ def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
 
     return videoNameDict
 
-def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoch,lastEpoch):
+def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoch,lastEpoch,firstThres,lastThres):
 
     resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)),key=modelBuilder.findNumbers))
 
@@ -792,8 +792,8 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
     resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
 
-    thresList = np.array([0.5,0.6,0.65,0.7,0.75,0.8])
-    #thresList = np.arange(10)/10
+    #thresList = np.array([0.5,0.6,0.65,0.7,0.75,0.8])
+    thresList = np.arange(firstThres,lastThres,step=(lastThres-firstThres)/10)
 
     iouArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
     iouArr_pred,iouArr_gt = iouArr.copy(),iouArr.copy()
@@ -916,10 +916,10 @@ def main(argv=None):
                                                                             The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments.\
                                                                             The values of this arg are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
 
-    argreader.parser.add_argument('--eval_model',type=int,nargs="*",help='To evaluate a model and plot the mean IoU as a function of the score threshold.\
+    argreader.parser.add_argument('--eval_model',type=float,nargs=4,help='To evaluate a model and plot the mean IoU as a function of the score threshold.\
                                     The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments. \
-                                    The values of this args can be the epochs at which to start and end the plot. If these are not indicated, the minimum and maximum\
-                                    possible epoch value will be used.')
+                                    The values of this args are the epochs at which to start and end the plot, followed by the minimum and maximum decision threshold \
+                                    to evaluate.')
 
     argreader = load_data.addArgs(argreader)
 
@@ -944,9 +944,11 @@ def main(argv=None):
     if args.plot_score:
         plotScore(args.exp_id,args.model_id,args.plot_score[0],args.plot_score[1],args.dataset_test,args.test_part_beg,args.test_part_end)
     if args.eval_model:
-        epochStart = args.eval_model[0] if len(args.eval_model) == 2 else None
-        epochEnd = args.eval_model[1] if len(args.eval_model) == 2 else None
-        evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd)
+        epochStart = int(args.eval_model[0])
+        epochEnd = int(args.eval_model[1])
+        thresMin = args.eval_model[2]
+        thresMax = args.eval_model[3]
+        evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd,thresMin,thresMax)
 
 if __name__ == "__main__":
     main()
