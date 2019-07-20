@@ -115,7 +115,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
                 if not audio[0] is None:
                     audio = audio.cuda()
 
-            if args.temp_model.find("resnet") != -1:
+            if args.temp_model.find("net") != -1:
                 if args.pool_temp_mod == "lstm" or args.pool_temp_mod == "cnn":
                     output = model(data,audio,None,None,target)
                 else:
@@ -200,7 +200,7 @@ def agregateHMDict(hmDict):
         hmDict[vidName] = np.array(hmDict[vidName]).mean()
 
 def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict):
-    if args.temp_model.find("resnet") != -1:
+    if args.temp_model.find("net") != -1:
         allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
 
     if args.pool_temp_mod == 'lstm' or args.pool_temp_mod == 'cnn'  :
@@ -281,7 +281,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
                 audio = audio.cuda()
         #print(data.size())
 
-        if args.temp_model.find("resnet") != -1:
+        if args.temp_model.find("net") != -1:
             output = model.computeFeat(data,audio).data
 
         else:
@@ -727,19 +727,20 @@ def addInitArgs(argreader):
 
 #Loss args
 def addLossArgs(argreader):
-    argreader.parser.add_argument('--class_weight', type=float, metavar='S',
+    argreader.parser.add_argument('--class_weight', type=float, metavar='CW',
                         help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
                         makes weights proportional to the class instance number of the other class.')
-    argreader.parser.add_argument('--sparsi_weig', type=float,metavar='LMAX',
+    argreader.parser.add_argument('--sparsi_weig', type=float,metavar='SW',
                         help='Weight of the term rewarding the sparsity in the score prediction')
-    argreader.parser.add_argument('--sparsi_wind', type=int,metavar='LMAX',
+    argreader.parser.add_argument('--sparsi_wind', type=int,metavar='SW',
                         help='Half-size of the window taken into account for the sparsity term')
-    argreader.parser.add_argument('--sparsi_thres', type=float,metavar='LMAX',
+    argreader.parser.add_argument('--sparsi_thres', type=float,metavar='ST',
                         help='Threshold above which the sum of scores in the window is considered too big ')
-    argreader.parser.add_argument('--soft_loss', type=args.str2bool,metavar='MODE',
+    argreader.parser.add_argument('--soft_loss', type=args.str2bool,metavar='BOOL',
                         help="To use target soften with a triangular kernel.")
-    argreader.parser.add_argument('--soft_loss_width', type=args.str2FloatList,metavar='MODE',
+    argreader.parser.add_argument('--soft_loss_width', type=args.str2FloatList,metavar='WIDTH',
                         help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
+
     return argreader
 
 #Optim args
