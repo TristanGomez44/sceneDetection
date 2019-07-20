@@ -189,6 +189,22 @@ class LSTM_sceneDet(nn.Module):
 
         return x,(h,c)
 
+class ScoreConv(nn.Module):
+
+    def __init__(self,kerSize,chan,biLay):
+
+        super(ScoreConv,self).__init__()
+
+        if biLay:
+            self.conv1 = torch.nn.Conv1d(1,chan,kerSize,padding=kerSize//2)
+            self.conv2 = torch.nn.Conv1d(chan,1,1)
+            self.layers = nn.Sequential(self.conv1,nn.ReLU(),self.conv2)
+        else:
+            self.layers = torch.nn.Conv1d(1,1,kerSize,padding=kerSize//2)
+
+    def forward(self,x):
+        return self.layers(x)
+
 class CNN_sceneDet(nn.Module):
     ''' A CNN temporal model
 
@@ -206,7 +222,7 @@ class CNN_sceneDet(nn.Module):
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,sceneLenCnnPool=0,auxModel=False):
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,scoreConvChan=8,scoreConvBiLay=False,sceneLenCnnPool=0):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -249,7 +265,7 @@ class CNN_sceneDet(nn.Module):
         self.sceneLenCnnPool = sceneLenCnnPool
 
         if scoreConvWindSize > 1:
-            self.scoreConv = torch.nn.Conv1d(1,1,scoreConvWindSize,padding=scoreConvWindSize//2)
+            self.scoreConv = ScoreConv(scoreConvWindSize,scoreConvChan,scoreConvBiLay)
         else:
             self.scoreConv = None
 
@@ -379,7 +395,7 @@ class SceneDet(nn.Module):
     '''
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize,sceneLenCnnPool):
+                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,sceneLenCnnPool):
 
         super(SceneDet,self).__init__()
 
@@ -416,7 +432,8 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("net") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,sceneLenCnnPool=sceneLenCnnPool)
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,\
+                                            scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,sceneLenCnnPool=sceneLenCnnPool)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -491,7 +508,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
                     args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.scene_len_cnn_pool)
+                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,args.scene_len_cnn_pool)
 
     return net
 
@@ -517,6 +534,12 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
                         help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
+
+    argreader.parser.add_argument('--score_conv_bilay', type=args.str2bool, metavar='N',
+                        help='To apply two convolution (the second is a 1x1 conv) on the scores instead of just one layer')
+
+    argreader.parser.add_argument('--score_conv_chan', type=int, metavar='N',
+                        help='The number of channel of the score convolution layer (used only if --score_conv_bilay is True)')
 
     argreader.parser.add_argument('--hidden_size', type=int,metavar='HS',
                         help='The size of the hidden layers in the RNN')
