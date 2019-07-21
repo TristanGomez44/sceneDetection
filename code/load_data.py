@@ -94,7 +94,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
     - max_shots (int): the total number of shot to process before stopping the training epoch. The youtube_large dataset contains a million shots, which is why this argument is useful.
     '''
 
-    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id,max_shots):
+    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id,max_shots,avgSceneLen):
 
         super(SeqTrDataset, self).__init__()
 
@@ -110,6 +110,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         self.framesPerShot = framesPerShot
         self.nbShots = 0
         self.exp_id = exp_id
+        self.avgSceneLen = avgSceneLen
 
         if propStart == propEnd:
             self.nbShots = 0
@@ -147,26 +148,37 @@ class SeqTrDataset(torch.utils.data.Dataset):
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds = np.arange(len(shotBounds))
 
+        #Computes the scene number of each shot
         gt = getGT(self.dataset,vidName)
-
-        #The scene number of each shot
         gt = np.cumsum(gt)
 
-        #Permutate the scenes
+        #Permutate the scene indexes. Later the shots will be sorted and this ensures the shots
+        #from scene n do not always appear before shots from scene m > n.
         gt = self.permuteScenes(gt)
 
-        #Select some shots
-        #zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
+        #Choosing some scenes
+        nbScenes = len(np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(self.dataset,vidName)))
+        sceneInds = np.arange(nbScenes)
+        np.random.shuffle(sceneInds)
+        nbChosenScenes = self.lMax//self.avgSceneLen
 
+        sceneInds = sceneInds[:nbChosenScenes]
+        #This try/except block captures the error that raises when the shotInds and the gt
+        #do not have the same length. This can happen if the data is badly formated
+        #which would indicate a missed case in the formatData.py script.
         try:
             zipped = np.concatenate((shotInds[:,np.newaxis],gt[:,np.newaxis]),axis=1)
         except ValueError:
             print("Error : ",vidName,"len(shotInds)",len(shotInds),"len(gt)",len(gt))
             sys.exit(0)
 
+        #Removing shots from scenes that are not chosen
+        zipped = list(filter(lambda x: x[1] in sceneInds,zipped))
+        #Select some shots
         np.random.shuffle(zipped)
-        zipped = zipped[:self.lMax]
+        zipped = np.array(zipped)[:self.lMax]
 
+        #Some shot will be repeated if there not enough to make a lMax long sequence
         if len(zipped) < self.lMax:
             repeatedShotInd = np.random.randint(len(zipped),size=self.lMax-len(zipped))
             zipped = np.concatenate((zipped,zipped[repeatedShotInd]),axis=0)
@@ -181,6 +193,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         gt[1:] = (gt[1:] !=  gt[:-1])
         gt[0] = 0
 
+        #Selecting frame indexes
         shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
         frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,)).long()
 
@@ -192,6 +205,9 @@ class SeqTrDataset(torch.utils.data.Dataset):
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
         self.preprocAudio = transforms.Compose([arrToExamp])
 
+        #Building the frame sequence
+        #This try/except block captures the error that raises when a frame index is too high.
+        #This can happen if the data is badly formated which would indicate a missed case in the formatData.py script.
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
@@ -199,6 +215,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
             sys.exit(0)
 
         if self.audioLen > 0:
+            #Build the audio sequence
             audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
             audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
             audioSeq = audioSeq.unsqueeze(0).float()
@@ -434,6 +451,9 @@ def addArgs(argreader):
                         help="The length of the audio for each shot (in seconds)")
     argreader.parser.add_argument('--random_frame_val', type=args.str2bool, metavar='N',
                         help='If true, random frames instead of middle frames will be used as key frame during validation. ')
+
+    argreader.parser.add_argument('--avg_scene_len', type=int, metavar='N',
+                        help='The average scene length in a training sequence')
 
     return argreader
 
