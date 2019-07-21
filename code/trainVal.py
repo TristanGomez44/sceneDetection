@@ -142,6 +142,19 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
             if args.sparsi_weig > 0:
                 loss += args.sparsi_weig*sparsiRew(output,args.sparsi_wind,args.sparsi_thres)
 
+            if args.dist_weight > 0 and target.sum() > 0:
+
+                inds = torch.arange(output.size(1)).unsqueeze(0).unsqueeze(2).to(target.device)
+                distTerm = 0
+                nonZeroEx = 0
+                for i,targSeq in enumerate(target):
+                    if targSeq.sum() > 0:
+                        targInds = targSeq.nonzero().permute(1,0).unsqueeze(0)
+                        distTerm +=args.dist_weight*((output[i]>0.5).long()*torch.min(torch.abs(inds-targInds),dim=2)[0]).float().mean()
+                        nonZeroEx += 1
+
+                loss += distTerm/nonZeroEx
+
             loss.backward()
             optim.step()
             optim.zero_grad()
@@ -741,6 +754,10 @@ def addLossArgs(argreader):
     argreader.parser.add_argument('--soft_loss_width', type=args.str2FloatList,metavar='WIDTH',
                         help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
 
+    argreader.parser.add_argument('--dist_weight', type=float,metavar='DW',
+                        help="The weight of the distance to scene change term in the loss function")
+
+
     return argreader
 
 #Optim args
@@ -870,29 +887,27 @@ def main(argv=None):
             audioLen = 0
         paramToOpti = []
 
-        if True:
+        train_dataset = load_data.SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
+                                            (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots,args.avg_scene_len)
+        sampler = load_data.Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
+        trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
+                          pin_memory=False,num_workers=args.num_workers)
 
-            train_dataset = load_data.SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
-                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots)
-            sampler = load_data.Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
-            trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
-                              pin_memory=False,num_workers=args.num_workers)
+        valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
+                                            (args.img_width,args.img_heigth),audioLen,args.resize_image,\
+                                            args.frames_per_shot,args.exp_id,args.random_frame_val)
 
-            valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
-                                                (args.img_width,args.img_heigth),audioLen,args.resize_image,\
-                                                args.frames_per_shot,args.exp_id,args.random_frame_val)
+        #Building the net
+        net = modelBuilder.netBuilder(args)
 
-            #Building the net
-            net = modelBuilder.netBuilder(args)
+        trainFunc = epochSeqTr
+        valFunc = epochSeqVal
 
-            trainFunc = epochSeqTr
-            valFunc = epochSeqVal
+        kwargsTr = {'log_interval':args.log_interval,'loader':trainLoader,'args':args,'writer':writer}
+        kwargsVal = kwargsTr.copy()
 
-            kwargsTr = {'log_interval':args.log_interval,'loader':trainLoader,'args':args,'writer':writer}
-            kwargsVal = kwargsTr.copy()
-
-            kwargsVal['loader'] = valLoader
-            kwargsVal.update({"metricEarlyStop":args.metric_early_stop,"maximiseMetric":args.maximise_metric})
+        kwargsVal['loader'] = valLoader
+        kwargsVal.update({"metricEarlyStop":args.metric_early_stop,"maximiseMetric":args.maximise_metric})
 
         for p in net.parameters():
             paramToOpti.append(p)
@@ -922,9 +937,8 @@ def main(argv=None):
         widthCounter = 0
         metricLastVal = None
 
-        if True:
-            outDictEpochs = {}
-            targDictEpochs = {}
+        outDictEpochs = {}
+        targDictEpochs = {}
 
         for epoch in range(startEpoch, args.epochs + 1):
 
@@ -963,14 +977,13 @@ def main(argv=None):
             else:
                 net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id,epoch)))
 
-            if True:
-                kwargsVal["metricLastVal"] = metricLastVal
-                kwargsVal["width"] = width
-                metricLastVal,outDict,targDict = valFunc(**kwargsVal)
+            kwargsVal["metricLastVal"] = metricLastVal
+            kwargsVal["width"] = width
+            metricLastVal,outDict,targDict = valFunc(**kwargsVal)
 
-                outDictEpochs[epoch] = outDict
-                targDictEpochs[epoch] = targDict
-                updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
+            outDictEpochs[epoch] = outDict
+            targDictEpochs[epoch] = targDict
+            updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
 
 if __name__ == "__main__":
     main()
