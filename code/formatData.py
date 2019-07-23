@@ -21,6 +21,8 @@ import shotdetect
 import shutil
 import pims
 
+from torch.distributions.gamma import Gamma
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -31,7 +33,11 @@ def main(argv=None):
     argreader.parser.add_argument('--merge_videos',type=str, metavar='EXT',help='Accumulate the clips from a folder to obtain one video per movie in the dataset. The value \
                                     is the extension of the video files, example : \'avi\'.')
     argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube and the youtube_large datasets. Put the clips into separate folder')
-    argreader.parser.add_argument('--format_bbc',action='store_true',help='Format the bbc dataset')
+    argreader.parser.add_argument('--format_bbc',type=str,metavar='EXT',help='Format the bbc dataset. The value is the extension of the video file. E.g : \"--format_bbc mp4\".')
+    argreader.parser.add_argument('--format_bbc2',nargs=2,type=str,metavar='EXT',help='Format the bbc season 2 dataset. As there is no annotation, artificial annotation are built.\
+                                                                                       The first value is the extension of the video file. E.g : \"--format_bbc2 mp4\". The second value\
+                                                                                       is the average length of the scene desired in number of shots.')
+
     argreader.parser.add_argument('--format_ovsd',action='store_true',help='Format the OVSD dataset')
     argreader.parser.add_argument('--shot_thres',type=float, default=0.1,metavar='EXT',help='The detection threshold for the shot segmentation done by ffmpeg')
 
@@ -240,14 +246,14 @@ def main(argv=None):
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
 
-                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.dataset,args.shot_thres)
+                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.shot_thres)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
             #Remove the temporary wav files:
             for wavFilePath in sorted(glob.glob(videoFoldPath+"/*.wav")):
                 os.remove(wavFilePath)
 
-            #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only 10 videos in this case)
+            #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
             resPath = "../data/youtube_large/{}/result.xml".format(vidName)
             res = processResults.xmlToArray(resPath)
 
@@ -261,7 +267,7 @@ def main(argv=None):
 
     if args.format_bbc:
 
-        videosPaths = sorted(glob.glob("../data/PlanetEarth/*.mkv"))
+        videosPaths = sorted(glob.glob("../data/PlanetEarth/*.{}".format(args.format_bbc)))
 
         #This creates the bbc folder and the annotation folder in it
         if not os.path.exists("../data/bbc/annotations"):
@@ -277,15 +283,16 @@ def main(argv=None):
             vidName = str(i)
 
             newPath = path.replace("PlanetEarth","bbc")
-            newPath = os.path.dirname(newPath)+"/"+vidName+".mkv"
+            newPath = os.path.dirname(newPath)+"/"+vidName+".{}".format(args.format_bbc)
 
             videoFold = os.path.splitext(newPath)[0]
 
             if not os.path.exists(videoFold):
                 os.makedirs(videoFold)
 
-            #Copy video
-            shutil.copyfile(path,newPath)
+            if not os.path.exists(newPath):
+                #Copy video
+                shutil.copyfile(path,newPath)
 
             #Extract audio
             extractAudio(newPath)
@@ -294,10 +301,7 @@ def main(argv=None):
                 #Extract shots
                 rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
                 shotCSV = removeHoles(rawShotCSV)
-
-                subprocess.call("ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(newPath),shell=True)
-                nbFrames = np.genfromtxt("nbFrames.txt")
-
+                nbFrames = getNbFrames(newPath)
                 shotCSV[-1,1] = nbFrames-1
 
                 np.savetxt(videoFold+"/result.csv",shotCSV)
@@ -315,6 +319,64 @@ def main(argv=None):
             scenesS = np.concatenate((starts,ends),axis=1)
             #The scene boundaries expressed with frame index
             scenesF = processResults.shots_to_frames("../data/bbc/{}/result.xml".format(vidName),scenesS)
+
+            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
+
+    if args.format_bbc2:
+
+        torch.manual_seed(0)
+
+        videosPaths = sorted(glob.glob("../data/PlanetEarth2/*.{}".format(args.format_bbc2[0])))
+
+        #This creates the bbc folder and the annotation folder in it
+        if not os.path.exists("../data/bbc2/annotations"):
+            os.makedirs("../data/bbc2/annotations")
+
+        #rawshotFilePaths = sorted(glob.glob("../data/PlanetEarth2/annotations/shots/*.txt"))
+        #rawSceneFilePaths = sorted(glob.glob("../data/PlanetEarth2/annotations/scenes/annotator_0/*"))
+
+        for i,path in enumerate(videosPaths):
+
+            print(path)
+
+            vidName = str(i)
+
+            newPath = path.replace("PlanetEarth2","bbc2")
+            newPath = os.path.dirname(newPath)+"/"+vidName+".{}".format(args.format_bbc2[0])
+
+            videoFold = os.path.splitext(newPath)[0]
+
+            if not os.path.exists(videoFold):
+                os.makedirs(videoFold)
+
+            #Copy video
+            if not os.path.exists(newPath):
+                shutil.copyfile(path,newPath)
+
+            fps = processResults.getVideoFPS(path)
+            frameNb = int(float(pims.Video(path)._duration)*fps)-1
+
+            #Extract shots
+            print("../data/bbc2/{}/result.csv".format(vidName))
+            if not os.path.exists("../data/bbc2/{}/result.csv".format(vidName)):
+                shotCSV = detect_format_shots(path,args.shot_thres,frameNb,fps)
+                if not os.path.exists("../data/bbc2/{}/".format(vidName)):
+                    os.makedirs("../data/bbc2/{}/".format(vidName))
+                np.savetxt("../data/bbc2/{}/result.csv".format(vidName),shotCSV)
+            else:
+                shotCSV = np.genfromtxt(videoFold+"/result.csv")
+
+            shotNb = len(shotCSV)
+
+            #Randomly generates scenes:
+            starts = generateRandomScenes(shotNb,float(args.format_bbc2[1]))
+            print(starts,shotNb)
+            ends = np.concatenate((starts[1:]-1,[shotNb-1]),axis=0)
+            starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
+            #The scene boundaries expressed with shot index
+            scenesS = np.concatenate((starts,ends),axis=1)
+            #The scene boundaries expressed with frame index
+            scenesF = processResults.shots_to_frames("../data/bbc2/{}/result.xml".format(vidName),scenesS)
 
             np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
 
@@ -342,7 +404,7 @@ def main(argv=None):
 
             #Extract shots
             if not os.path.exists("../data/OVSD/{}/result.csv".format(vidName)):
-                shotBoundsFrame = detect_format_shots(path,'OVSD',args.shot_thres,frameNb,fps)
+                shotBoundsFrame = detect_format_shots(path,args.shot_thres,frameNb,fps)
                 if not os.path.exists("../data/OVSD/{}/".format(vidName)):
                     os.makedirs("../data/OVSD/{}/".format(vidName))
                 np.savetxt("../data/OVSD/{}/result.csv".format(vidName),shotBoundsFrame)
@@ -350,7 +412,27 @@ def main(argv=None):
             #Extract audio
             extractAudio(path)
 
-def detect_format_shots(path,dataset,shot_thres,frameNb,fps):
+def getNbFrames(path):
+    pimsVid = pims.Video(path)
+    fps = float(pimsVid._frame_rate)
+    nbFrames = int(float(pimsVid._duration)*fps)
+    return nbFrames
+
+def generateRandomScenes(shotNb,mean,var=0.5):
+
+    scale = var/mean
+    shape = mean/scale
+
+    gam = Gamma(shape, 1/scale)
+
+    #Generating scene starts index by first generating scene lengths
+    starts = torch.cat((torch.tensor([0]),torch.cumsum(gam.rsample((shotNb,)).int(),dim=0)),dim=0)
+    #Probably to many scenes have been generated. Removing those above the movie limit
+    starts = starts[starts < shotNb]
+
+    return starts
+
+def detect_format_shots(path,shot_thres,frameNb,fps):
 
     vidName = os.path.basename(os.path.splitext(path)[0])
 
