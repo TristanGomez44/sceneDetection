@@ -163,7 +163,7 @@ def binaryToMetrics(pred,target):
 
     return cov_val,overflow_val,iou_val
 
-def binaryToIoUs(pred,target):
+def binaryToFullMetrics(pred,target):
     ''' Computes the IoU of a predicted scene segmentation using a gt and a prediction encoded in binary format
 
     This computes IoU relative to prediction and to ground truth and also computes the mean of the two. \
@@ -191,18 +191,24 @@ def binaryToIoUs(pred,target):
             predBounds.append(pred_bounds)
             targBounds.append(targ_bounds)
 
-    iou,iou_pred,iou_gt = 0,0,0
+    iou,iou_pred,iou_gt,over,cover = 0,0,0,0,0
     for pred,targ in zip(predBounds,targBounds):
 
         iou_pred += IoU_oneRef(np.array(targ),np.array(pred))
         iou_gt += IoU_oneRef(np.array(pred),np.array(targ))
         iou += iou_pred*0.5+iou_gt*0.5
+        over += overflow(np.array(targ),np.array(pred))
+        cover += coverage(np.array(targ),np.array(pred))
 
     iou_pred /= len(targBounds)
     iou_gt /= len(targBounds)
     iou /= len(targBounds)
+    over /= len(targBounds)
+    cover /= len(targBounds)
 
-    return iou,iou_pred,iou_gt
+    f_score = 2*cover*(1-over)/(cover+1-over)
+
+    return iou,iou_pred,iou_gt,f_score
 
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
@@ -623,27 +629,10 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     videoRes.release()
 
-def getVideoFPS(videoPath,exp_id=None):
-    ''' Get the number of frame per sencond of a video. Saves it in a text file so it does not have to be computed again '''
+def getVideoFPS(videoPath):
+    ''' Get the number of frame per sencond of a video.'''
 
-    if not os.path.exists("info_{}_{}.txt".format(os.path.basename(videoPath),exp_id)):
-        subprocess.call("ffmpeg -i {} 2>info_{}_{}.txt".format(videoPath,os.path.basename(videoPath),exp_id),shell=True)
-    with open('info_{}_{}.txt'.format(os.path.basename(videoPath),exp_id), 'r') as infoFile:
-        infos = infoFile.read()
-    fps = None
-
-    for line in infos.split("\n"):
-
-        if line.find("fps") != -1:
-            for info in line.split(","):
-
-                if info.find("fps") != -1:
-                    fps = float(info.replace(" ","").replace("fps",""))
-
-    if fps is None:
-        raise ValueError("FPS info not found in info_{}_{}.txt".format(os.path.basename(videoPath),exp_id))
-
-    return fps
+    return float(pims.Video(videoPath)._frame_rate)
 
 def convScoPlot(weightFile):
 
@@ -797,6 +786,7 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
     iouArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
     iouArr_pred,iouArr_gt = iouArr.copy(),iouArr.copy()
+    fscoArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
 
     cmap = cm.rainbow(np.linspace(0, 1, len(thresList)))
 
@@ -815,6 +805,11 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
     box = ax_gt.get_position()
     ax_gt.set_position([box.x0, box.y0, box.width * 0.7, box.height])
 
+    fig_sco = plt.figure(4,figsize=(13,8))
+    ax_fsco = fig_sco.add_subplot(111)
+    box = ax_fsco.get_position()
+    ax_fsco.set_position([box.x0, box.y0, box.width * 0.7, box.height])
+
     for i,thres in enumerate(thresList):
         print(thres)
 
@@ -822,7 +817,7 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
             resFilePaths = sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,k+firstEpoch)),key=modelBuilder.findNumbers)
 
-            iou_mean,iou_pred_mean,iou_gt_mean = 0,0,0
+            iou_mean,iou_pred_mean,iou_gt_mean,f_sco_mean = 0,0,0,0
 
             print("Epoch",k+firstEpoch,len(resFilePaths)," videos")
 
@@ -837,19 +832,22 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
                 pred = (scores > thres)
 
-                iou,iou_pred,iou_gt = binaryToIoUs(pred[np.newaxis,:],gt[np.newaxis,:])
+                iou,iou_pred,iou_gt,f_sco = binaryToFullMetrics(pred[np.newaxis,:],gt[np.newaxis,:])
 
                 iou_mean += iou
                 iou_pred_mean += iou_pred
                 iou_gt_mean += iou_gt
+                f_sco_mean += f_sco
 
             iouArr[i,k] = iou_mean/len(resFilePaths)
             iouArr_pred[i,k] = iou_pred_mean/len(resFilePaths)
             iouArr_gt[i,k] = iou_gt_mean/len(resFilePaths)
+            fscoArr[i,k] = f_sco_mean/len(resFilePaths)
 
         ax.plot(np.arange(firstEpoch,lastEpoch+1),iouArr[i],label=thres,color=cmap[i], marker=mark)
         ax_pred.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_pred[i],label=thres,color=cmap[i],marker=mark)
         ax_gt.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_gt[i],label=thres,color=cmap[i],marker=mark)
+        ax_fsco.plot(np.arange(firstEpoch,lastEpoch+1),fscoArr[i],label=thres,color=cmap[i],marker=mark)
 
     plt.figure(1,figsize=(13,8))
     plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
@@ -869,23 +867,33 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
     ax_gt.set_ylabel("IoU gt")
     ax_gt.set_ylim(0,1)
 
+    plt.figure(4,figsize=(13,8))
+    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
+    ax_fsco.set_xlabel("Epoch")
+    ax_fsco.set_ylabel("F-score")
+    ax_fsco.set_ylim(0,1)
+
     if not os.path.exists("../vis/{}".format(exp_id)):
         os.makedirs("../vis/{}".format(exp_id))
 
     fig.savefig("../vis/{}/model{}_iouThres.png".format(exp_id,model_id))
     fig_pred.savefig("../vis/{}/model{}_iouPredThres.png".format(exp_id,model_id))
     fig_gt.savefig("../vis/{}/model{}_iouGTThres.png".format(exp_id,model_id))
+    fig_sco.savefig("../vis/{}/model{}_fscoThres.png".format(exp_id,model_id))
 
     bestInd = np.argmax(iouArr)
     bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
-
-    print(iouArr.shape,bestInd)
-
-    print("Best threshold : ",thresList[bestThresInd])
+    print("Best threshold for IoU: ",thresList[bestThresInd])
     print("Best epoch : ",bestEpochInd+firstEpoch)
-
     print("Best IoU's : ")
     print(iouArr[bestThresInd])
+
+    bestInd = np.argmax(fscoArr)
+    bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
+    print("Best threshold for F-score : ",thresList[bestThresInd])
+    print("Best epoch : ",bestEpochInd+firstEpoch)
+    print("Best F-scores : ")
+    print(fscoArr[bestThresInd])
 
 def main(argv=None):
 
