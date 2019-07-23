@@ -62,6 +62,21 @@ class Sampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.length
 
+class AdvSampler(torch.utils.data.sampler.Sampler):
+    """ The sampler for the SeqTrDataset dataset
+    """
+
+    def __init__(self,nbTotalShots):
+
+        self.length = nbTotalShots
+
+    def __iter__(self):
+
+        return iter(torch.randint(2,(self.length,)))
+
+    def __len__(self):
+        return self.length
+
 def collateSeq(batch):
 
     res = list(zip(*batch))
@@ -69,7 +84,9 @@ def collateSeq(batch):
     res[0] = torch.cat(res[0],dim=0)
     if not res[1][0] is None:
         res[1] = torch.cat(res[1],dim=0)
-    res[2] = torch.cat(res[2],dim=0)
+
+    if type(res[2]) is torch.tensor:
+        res[2] = torch.cat(res[2],dim=0)
 
     return res
 
@@ -98,9 +115,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         super(SeqTrDataset, self).__init__()
 
-        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
-        self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
+        self.videoPaths = findVideos(dataset,propStart,propEnd)
 
         self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
         self.imgSize = imgSize
@@ -156,13 +171,14 @@ class SeqTrDataset(torch.utils.data.Dataset):
         #from scene n do not always appear before shots from scene m > n.
         gt = self.permuteScenes(gt)
 
-        #Choosing some scenes
-        nbScenes = len(np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(self.dataset,vidName)))
-        sceneInds = np.arange(nbScenes)
-        np.random.shuffle(sceneInds)
-        nbChosenScenes = self.lMax//self.avgSceneLen
+        if self.avgSceneLen != -1:
+            #Choosing some scenes
+            nbScenes = len(np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(self.dataset,vidName)))
+            sceneInds = np.arange(nbScenes)
+            np.random.shuffle(sceneInds)
+            nbChosenScenes = self.lMax//self.avgSceneLen
+            sceneInds = sceneInds[:nbChosenScenes]
 
-        sceneInds = sceneInds[:nbChosenScenes]
         #This try/except block captures the error that raises when the shotInds and the gt
         #do not have the same length. This can happen if the data is badly formated
         #which would indicate a missed case in the formatData.py script.
@@ -172,8 +188,14 @@ class SeqTrDataset(torch.utils.data.Dataset):
             print("Error : ",vidName,"len(shotInds)",len(shotInds),"len(gt)",len(gt))
             sys.exit(0)
 
-        #Removing shots from scenes that are not chosen
-        zipped = list(filter(lambda x: x[1] in sceneInds,zipped))
+        if self.avgSceneLen != -1:
+            #Removing shots from scenes that are not chosen
+            zippedFiltered = list(filter(lambda x: x[1] in sceneInds,zipped))
+
+            #Prevent a bug where there happen to be zero shots
+            if len(zippedFiltered) > 0:
+                zipped = zippedFiltered
+
         #Select some shots
         np.random.shuffle(zipped)
         zipped = np.array(zipped)[:self.lMax]
@@ -232,6 +254,71 @@ class SeqTrDataset(torch.utils.data.Dataset):
         gt = gt_perm
         return gt
 
+class VideoFrameDataset(torch.utils.data.Dataset):
+
+    def __init__(self,dataset0,propStart0,propEnd0,dataset1,propStart1,propEnd1,imgSize,resizeImage,max_shots):
+
+        super(VideoFrameDataset, self).__init__()
+
+        self.videoPathsDataset0 = findVideos(dataset0,propStart0,propEnd0)
+        self.videoPathsDataset1 = findVideos(dataset1,propStart1,propEnd1)
+        self.videoPaths = np.concatenate((self.videoPathsDataset0,self.videoPathsDataset1),axis=0)
+        #np.random.shuffle(self.videoPaths)
+
+        self.imgSize = imgSize
+        self.dataset0,self.dataset1 = dataset0,dataset1
+        self.nbShots = 0
+
+        #Computing shots
+        if max_shots != -1:
+            self.nbShots = max_shots
+        else:
+            for videoPath in self.videoPaths:
+                videoFold = os.path.splitext(videoPath)[0]
+                self.nbShots += len(processResults.xmlToArray("{}/result.xml".format(videoFold)))
+
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        if not resizeImage:
+            self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
+        else:
+            self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.RandomResizedCrop(imgSize),transforms.ToTensor(),normalize])
+
+        self.FPSDict = {}
+    def __len__(self):
+        return self.nbShots
+    def __getitem__(self,datasetInd):
+
+        videoPaths = self.videoPathsDataset0 if datasetInd == 0 else self.videoPathsDataset1
+
+        vidInd = np.random.randint(len(videoPaths))
+
+        data = torch.zeros(3,self.imgSize[0],self.imgSize[1])
+        vidFold = os.path.splitext(videoPaths [vidInd])[0]
+        vidName = os.path.basename(vidFold)
+
+        if not videoPaths [vidInd] in self.FPSDict.keys():
+            self.FPSDict[videoPaths [vidInd]] = processResults.getVideoFPS(videoPaths [vidInd])
+
+        fps = self.FPSDict[videoPaths [vidInd]]
+
+        shotBounds = processResults.xmlToArray("{}/result.xml".format(vidFold))
+        shotInd = np.random.randint(len(shotBounds))
+
+        #Selecting frame indexes
+        shotBounds = torch.tensor(shotBounds[shotInd]).float()
+        frameInd = torch.distributions.uniform.Uniform(shotBounds[0], shotBounds[1]+1).sample().long()
+
+        video = pims.Video(videoPaths [vidInd])
+
+        if vidFold.find(self.dataset0):
+            gt = [0]
+        elif vidFold.find(self.dataset1):
+            gt = [1]
+        else:
+            raise ValueError("Can't know from which dataset the video {} is coming.".format(vidFold))
+
+        return self.preproc(video[frameInd.item()]).unsqueeze(0),torch.tensor(gt).float().unsqueeze(0),[vidName]
+
 class TestLoader():
     '''
     The dataset to sample sequence of frames from videos. As the video contains a great number of shot,
@@ -252,10 +339,9 @@ class TestLoader():
     def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id,randomFrame):
         self.evalL = evalL
         self.dataset = dataset
-        self.videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset)))))
-        self.videoPaths = list(filter(lambda x:x.find(".xml") == -1,self.videoPaths))
-        self.videoPaths = list(filter(lambda x:os.path.isfile(x),self.videoPaths))
-        self.videoPaths = np.array(self.videoPaths)[int(propStart*len(self.videoPaths)):int(propEnd*len(self.videoPaths))]
+
+        self.videoPaths = findVideos(dataset,propStart,propEnd)
+
         self.framesPerShot = framesPerShot
         self.randomFrame = randomFrame
 
@@ -337,6 +423,13 @@ class TestLoader():
         frameInds = ((np.arange(self.framesPerShot)/self.framesPerShot)[np.newaxis,:]*(shotBounds[:,1]-shotBounds[:,0])[:,np.newaxis]+shotBounds[:,0][:,np.newaxis]).astype(int)
 
         return frameInds
+
+def findVideos(dataset,propStart,propEnd):
+    videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
+    videoPaths = list(filter(lambda x:x.find(".wav") == -1,videoPaths))
+    videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
+    videoPaths = np.array(videoPaths)[int(propStart*len(videoPaths)):int(propEnd*len(videoPaths))]
+    return videoPaths
 
 def readAudio(audioData,i,fps,fs,audio_len):
     ''' Select part of an audio track
@@ -459,45 +552,19 @@ def addArgs(argreader):
 
 def main():
 
-    #getMiddleFrames("OVSD")
+    train_dataset = VideoFrameDataset("youtube_large",0,0.995,"bbc2",0,1,(299,299),True,600)
 
-    np.random.seed(0)
-    torch.manual_seed(0)
-    torch.cuda.manual_seed(0)
+    adv_batch_size = 32
 
-    def testLoader(trainLoader,nbBatch_max=20,countFirst=True):
-        nbBatch = 0
-        time_start = time.time()
-        timeList = np.zeros(nbBatch_max-(not countFirst))
-        for batch in trainLoader:
+    sampler = AdvSampler(train_dataset.nbShots)
+    trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=adv_batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
+                      pin_memory=False,num_workers=0)
 
-            if not (nbBatch==0 and not countFirst):
-                timeList[nbBatch-(not countFirst)] = time.time()-time_start
+    for i,(imgBatch,gt,vidNames) in enumerate(trainLoader):
 
-            nbBatch += 1
-            time_start = time.time()
-            if nbBatch == nbBatch_max:
-                break
-        end_time = time.time()
+        print(i,imgBatch.size(),gt.size(),vidNames)
 
-        print("Time per batch : ",timeList.mean(),timeList.std(),timeList)
 
-    train_dataset = SeqTrDataset(4,"Holly2",0,0.9,25,35,(298,298),1,False,1,"TestOfPytorchLoader")
-    sampler = Sampler(len(train_dataset.videoPaths))
-
-    for i in [4,8]:
-        trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,
-                          batch_size=4,
-                          sampler=sampler,
-                          collate_fn=collateSeq, # use custom collate function here
-                          pin_memory=True,
-                          num_workers=i)
-
-        print("num_workers",i)
-        testLoader(trainLoader,countFirst=False)
-
-    trainLoader = TrainLoader(4,"Holly2",0,0.9,25,35,(298,298),1,False,1,"TestOfPytorchLoader")
-    testLoader(trainLoader)
 
 if __name__ == "__main__":
     main()
