@@ -139,6 +139,25 @@ class FrameAttention(nn.Module):
         attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
         return attWeights
 
+class Discriminator(nn.Module):
+
+    def __init__(self,inFeat):
+
+        super(Discriminator,self).__init__()
+
+        self.lin1 = nn.Linear(inFeat,512)
+        self.lin2 = nn.Linear(512,128)
+        self.lin3 = nn.Linear(128,1)
+
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=0.5)
+
+    def forward(self,x):
+
+        x = self.dropout(self.relu(self.lin1(x)))
+        x = self.dropout(self.relu(self.lin2(x)))
+        return self.relu(self.lin3(x))
+
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
 
@@ -579,14 +598,9 @@ def addArgs(argreader):
 def main():
 
 
-    imagePathList = np.array(sorted(glob.glob("../data/OVSD/Big_buck_bunny/middleFrames/*"),key=findNumbers),dtype=str)
-    imagePathList = list(filter(lambda x:x.find(".wav") == -1,imagePathList))
+    discr = Discriminator(2048)
 
-    soundPathList = np.array(sorted(glob.glob("../data/OVSD/Big_buck_bunny/middleFrames/*.wav"),key=findNumbers),dtype=str)
-
-    diagBlock = DiagBlock(cuda=True,batchSize=32,feat="googLeNet",pretrainDataSet="imageNet",audioFeat="vggish")
-
-    diagBlock.detectDiagBlock(imagePathList,soundPathList,"test_exp",1)
-
+    res = discr(torch.zeros((32,2048)))
+    print(res.shape)
 if __name__ == "__main__":
     main()
