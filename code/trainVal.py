@@ -94,6 +94,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
     total_loss = 0
     total_cover = 0
     total_overflow = 0
+    total_fsco = 0
     total_auc = 0
     total_iou = 0
     validBatch = 0
@@ -168,6 +169,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
 
             total_cover += cov
             total_overflow += overflow
+            total_fsco += 2*cov*(1-overflow)/(cov+1-overflow)
             total_iou += iou
 
             #Store the f score of each example
@@ -190,7 +192,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width):
     if not allGT is None:
         total_auc = roc_auc_score(allGT.view(-1).cpu().numpy(),allOut.view(-1).cpu().numpy())
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
-        writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"train",args.model_id,args.exp_id)
+        writeSummaries(total_loss,total_cover,total_overflow,total_fsco,total_auc,total_iou,validBatch,writer,epoch,"train",args.model_id,args.exp_id)
 
     #Compute the mean f-score of the all the videos processed during this training epoch
     agregateHMDict(hmDict)
@@ -212,7 +214,7 @@ def agregateHMDict(hmDict):
     for vidName in hmDict.keys():
         hmDict[vidName] = np.array(hmDict[vidName]).mean()
 
-def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict):
+def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc,outDict,targDict):
     if args.temp_model.find("net") != -1:
         allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
 
@@ -239,13 +241,14 @@ def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,tota
     cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
     total_cover += cov
     total_overflow += overflow
+    total_fsco += 2*cov*(1-overflow)/(cov+1-overflow)
     total_iou += iou
 
     total_auc += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
 
     nbVideos += 1
 
-    return allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc
+    return allOutput,nbVideos,total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc
 
 def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyStop,metricLastVal,maximiseMetric):
     '''
@@ -268,7 +271,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
     print("Epoch",epoch," : val")
 
-    total_loss,total_cover,total_overflow,total_auc,total_iou,nbVideos = 0,0,0,0,0,0
+    total_loss,total_cover,total_overflow,total_fsco,total_auc,total_iou,nbVideos = 0,0,0,0,0,0,0
 
     outDict = {}
     targDict = {}
@@ -309,8 +312,8 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
         if newVideo and not videoBegining:
             #print("targDict",targDict)
-            allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
-                                                                                                    total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict)
+            allOutput,nbVideos,total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
+                                                                                                    total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc,outDict,targDict)
         if newVideo:
             allTarget = target
             allOutput = output
@@ -325,14 +328,14 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
             break
 
     if not args.debug:
-        allOutput,nbVideos,total_loss,total_cover,total_overflow,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
-                                                                                        total_loss,total_cover,total_overflow,total_iou,total_auc,outDict,targDict)
+        allOutput,nbVideos,total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,\
+                                                                                        total_loss,total_cover,total_overflow,total_fsco,total_iou,total_auc,outDict,targDict)
 
     for key in outDict.keys():
         fullArr = torch.cat((frameIndDict[key].float(),outDict[key].permute(1,0)),dim=1)
         np.savetxt("../results/{}/{}_epoch{}_{}.csv".format(args.exp_id,args.model_id,epoch,key),fullArr.cpu().detach().numpy())
 
-    metricDict = writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,validBatch,writer,epoch,"val",args.model_id,args.exp_id,nbVideos=nbVideos)
+    metricDict = writeSummaries(total_loss,total_cover,total_overflow,total_fsco,total_auc,total_iou,validBatch,writer,epoch,"val",args.model_id,args.exp_id,nbVideos=nbVideos)
 
     metricVal = metricDict[metricEarlyStop]
 
@@ -461,33 +464,7 @@ def getWeights(target,classWeight):
 
     return weights
 
-def writeSummariesSiam(total_loss,correct,total_posDist,total_negDist,batchNb,writer,epoch,mode,model_id,exp_id):
-    '''
-
-
-    '''
-
-
-    total_loss /= batchNb
-    total_posDist /= batchNb
-    total_negDist /= batchNb
-    accuracy = correct/batchNb
-
-    writer.add_scalars('Losses',{model_id+"_"+mode:total_loss},epoch)
-    writer.add_scalars('Accuracies',{model_id+"_"+mode:accuracy},epoch)
-    writer.add_scalars('Pos_dist',{model_id+"_"+mode:total_posDist},epoch)
-    writer.add_scalars('Neg_dist',{model_id+"_"+mode:total_negDist},epoch)
-
-    if not os.path.exists("../results/{}/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode)):
-        header = "epoch,loss,accuracy,posDist,negDist"
-    else:
-        header = ""
-
-    with open("../results/{}/{}_siam_epoch{}_metrics_{}.csv".format(model_id,epoch,mode),"a") as text_file:
-        print(header,file=text_file)
-        print("{},{},{},{},{}".format(epoch,total_loss,accuracy,total_posDist,total_negDist),file=text_file)
-
-def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,batchNb,writer,epoch,mode,model_id,exp_id,nbVideos=None):
+def writeSummaries(total_loss,total_cover,total_overflow,total_fsco,total_auc,total_iou,batchNb,writer,epoch,mode,model_id,exp_id,nbVideos=None):
     ''' Write the metric computed during an evaluation in a tf writer and in a csv file
 
     Args:
@@ -514,12 +491,14 @@ def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,bat
     total_iou /= sampleNb
     total_cover /= sampleNb
     total_overflow /= sampleNb
+
     f_score = 2*total_cover*(1-total_overflow)/(total_cover+1-total_overflow)
+    true_fsco = total_fsco/sampleNb
 
     if mode != "train":
         total_auc /= sampleNb
 
-    metricDict = {'Losse':total_loss,'Coverage':total_cover,'Overflow':total_overflow,'F-score':f_score,'AuC':total_auc,'IoU':total_iou}
+    metricDict = {'Losse':total_loss,'Coverage':total_cover,'Overflow':total_overflow,'F-score':f_score,'True F-score':true_fsco,'AuC':total_auc,'IoU':total_iou}
 
     for metric in metricDict:
         writer.add_scalars(metric,{model_id+"_"+mode:metricDict[metric]},epoch)
@@ -531,7 +510,7 @@ def writeSummaries(total_loss,total_cover,total_overflow,total_auc,total_iou,bat
 
     with open("../results/{}/model{}_epoch{}_metrics_{}.csv".format(exp_id,model_id,epoch,mode),"a") as text_file:
         print(header,file=text_file)
-        print("{},{},{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score,total_auc,total_iou),file=text_file)
+        print("{},{},{},{},{},{},{},{}\n".format(epoch,total_loss,total_cover,total_overflow,f_score,true_fsco,total_auc,total_iou),file=text_file)
 
     return metricDict
 
@@ -979,7 +958,8 @@ def main(argv=None):
 
             kwargsVal["metricLastVal"] = metricLastVal
             kwargsVal["width"] = width
-            metricLastVal,outDict,targDict = valFunc(**kwargsVal)
+            with torch.no_grad():
+                metricLastVal,outDict,targDict = valFunc(**kwargsVal)
 
             outDictEpochs[epoch] = outDict
             targDictEpochs[epoch] = targDict
