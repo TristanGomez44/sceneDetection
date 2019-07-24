@@ -80,6 +80,28 @@ def addAdvTerm(loss,args,feat,featModel,discrModel,discrIter,discrOptim):
 
     return loss,discMeanAcc
 
+def addSiamTerm(loss,args,featBatch,target):
+    target = torch.cumsum(target,dim=-1)
+
+    distPos,distNeg = 0,0
+
+    if args.siam_weight > 0:
+        #Parsing each example of the batch
+        for i,feat in enumerate(featBatch):
+            inds1,inds2 = torch.randint(feat.size(0),size=(2,args.siam_nb_samples))
+            feat1,feat2 = feat[inds1],feat[inds2]
+            targ1,targ2 = target[i][inds1],target[i][inds2]
+
+            dist = torch.pow(feat1-feat2,2).sum(dim=-1)
+            targ = (targ1==targ2).float()
+
+            loss += args.siam_weight*(targ*dist+(1-targ)*F.relu(args.siam_margin-dist)).mean()
+
+            distPos += dist[targ.long()].mean()
+            distNeg += dist[1-targ.long()].mean()
+
+    return loss,distPos/len(featBatch),distNeg/len(featBatch)
+
 def sparsiRew(output,wind,thres):
 
     weight = torch.ones(1,1,wind).to(output.device)
@@ -140,7 +162,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
     print("Epoch",epoch," : train")
 
     metrDict = {"Loss":0,"Coverage":0,"Overflow":0,"True F-score":0,"AuC":0,\
-                "IoU":0,"Disc Accuracy":0}
+                "IoU":0,"Disc Accuracy":0,"Dist Pos":0,"Dist Neg":0}
 
     validBatch = 0
 
@@ -191,6 +213,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
             loss = addSparsTerm(loss,args,output)
             loss = addDistTerm(loss,args,output,target)
             loss,discMeanAcc = addAdvTerm(loss,args,model.features,model.featModel,kwargs["discrModel"],kwargs["discrIter"],kwargs["discrOptim"])
+            loss,distPos,distNeg = addSiamTerm(loss,args,model.features,target)
 
             loss.backward()
             optim.step()
@@ -208,6 +231,8 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
             metrDict["True F-score"] += 2*cov*(1-overflow)/(cov+1-overflow)
             metrDict["IoU"] += iou
             metrDict["Disc Accuracy"] += discMeanAcc
+            metrDict["Dist Pos"] += distPos
+            metrDict["Dist Neg"] += distNeg
 
             #Store the f score of each example
             updateHMDict(hmDict,cov,overflow,vidNames)
@@ -780,6 +805,18 @@ def addLossArgs(argreader):
                         help="The weight of the adversarial term in the loss function. This term penalise the model \
                             if the discriminator is able to find if the shots comes from the training dataset or the \
                             auxilliary dataset (see --dataset_adv in load_data.py)")
+
+    argreader.parser.add_argument('--siam_weight', type=float,metavar='DW',
+                        help="The weight of the siamese term in the loss function. This term penalise the model \
+                            if the features are too close when they belong to different scene and if they are too\
+                            far away when they belong to the same scenes.")
+
+    argreader.parser.add_argument('--siam_margin', type=float,metavar='DW',
+                        help="The margin of the siamese term. The model is penalized is the distance between features \
+                            belonging to the same scene is above this argument.")
+
+    argreader.parser.add_argument('--siam_nb_samples', type=int,metavar='DW',
+                        help="The number of feature pairs to build at each batch.")
 
     return argreader
 
