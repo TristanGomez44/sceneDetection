@@ -66,13 +66,14 @@ class AdvSampler(torch.utils.data.sampler.Sampler):
     """ The sampler for the SeqTrDataset dataset
     """
 
-    def __init__(self,nbTotalShots):
+    def __init__(self,nbVideos,nbTotalShots,batchSize,nbShotPerSeq):
 
-        self.length = nbTotalShots
+        self.length = batchSize*nbTotalShots//nbShotPerSeq
+        self.nbVideos = nbVideos
 
     def __iter__(self):
 
-        return iter(torch.randint(2,(self.length,)))
+        return iter(torch.randint(self.nbVideos,(self.length,)))
 
     def __len__(self):
         return self.length
@@ -85,7 +86,7 @@ def collateSeq(batch):
     if not res[1][0] is None:
         res[1] = torch.cat(res[1],dim=0)
 
-    if type(res[2]) is torch.tensor:
+    if torch.is_tensor(res[2][0]):
         res[2] = torch.cat(res[2],dim=0)
 
     return res
@@ -156,9 +157,9 @@ class SeqTrDataset(torch.utils.data.Dataset):
         vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
 
         if not self.videoPaths[vidInd] in self.FPSDict.keys():
-            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
+            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd])
 
-        fps = processResults.getVideoFPS(self.videoPaths[vidInd],self.exp_id)
+        fps = processResults.getVideoFPS(self.videoPaths[vidInd])
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds = np.arange(len(shotBounds))
@@ -217,8 +218,11 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         #Selecting frame indexes
         shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-        frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,)).long()
+        frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,))
 
+        #Clamp the maximal value to the last frame index
+        lastFrameInd = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max()
+        frameInds = torch.clamp(frameInds,0,lastFrameInd).long()
         frameInds = frameInds.transpose(dim0=0,dim1=1)
         frameInds = frameInds.contiguous().view(-1)
 
@@ -256,17 +260,15 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
 class VideoFrameDataset(torch.utils.data.Dataset):
 
-    def __init__(self,dataset0,propStart0,propEnd0,dataset1,propStart1,propEnd1,imgSize,resizeImage,max_shots):
+    def __init__(self,dataset,propStart,propEnd,imgSize,resizeImage,max_shots):
 
         super(VideoFrameDataset, self).__init__()
 
-        self.videoPathsDataset0 = findVideos(dataset0,propStart0,propEnd0)
-        self.videoPathsDataset1 = findVideos(dataset1,propStart1,propEnd1)
-        self.videoPaths = np.concatenate((self.videoPathsDataset0,self.videoPathsDataset1),axis=0)
+        self.videoPaths = findVideos(dataset,propStart,propEnd)
         #np.random.shuffle(self.videoPaths)
 
         self.imgSize = imgSize
-        self.dataset0,self.dataset1 = dataset0,dataset1
+        self.dataset = dataset
         self.nbShots = 0
 
         #Computing shots
@@ -286,20 +288,16 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         self.FPSDict = {}
     def __len__(self):
         return self.nbShots
-    def __getitem__(self,datasetInd):
-
-        videoPaths = self.videoPathsDataset0 if datasetInd == 0 else self.videoPathsDataset1
-
-        vidInd = np.random.randint(len(videoPaths))
+    def __getitem__(self,vidInd):
 
         data = torch.zeros(3,self.imgSize[0],self.imgSize[1])
-        vidFold = os.path.splitext(videoPaths [vidInd])[0]
+        vidFold = os.path.splitext(self.videoPaths[vidInd])[0]
         vidName = os.path.basename(vidFold)
 
-        if not videoPaths [vidInd] in self.FPSDict.keys():
-            self.FPSDict[videoPaths [vidInd]] = processResults.getVideoFPS(videoPaths [vidInd])
+        if not self.videoPaths[vidInd] in self.FPSDict.keys():
+            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd])
 
-        fps = self.FPSDict[videoPaths [vidInd]]
+        fps = self.FPSDict[self.videoPaths[vidInd]]
 
         shotBounds = processResults.xmlToArray("{}/result.xml".format(vidFold))
         shotInd = np.random.randint(len(shotBounds))
@@ -308,14 +306,9 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         shotBounds = torch.tensor(shotBounds[shotInd]).float()
         frameInd = torch.distributions.uniform.Uniform(shotBounds[0], shotBounds[1]+1).sample().long()
 
-        video = pims.Video(videoPaths [vidInd])
+        video = pims.Video(self.videoPaths[vidInd])
 
-        if vidFold.find(self.dataset0):
-            gt = [0]
-        elif vidFold.find(self.dataset1):
-            gt = [1]
-        else:
-            raise ValueError("Can't know from which dataset the video {} is coming.".format(vidFold))
+        gt = [1]
 
         return self.preproc(video[frameInd.item()]).unsqueeze(0),torch.tensor(gt).float().unsqueeze(0),[vidName]
 
@@ -378,7 +371,7 @@ class TestLoader():
 
         vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
-        fps = processResults.getVideoFPS(videoPath,self.exp_id)
+        fps = processResults.getVideoFPS(videoPath)
 
         shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
@@ -424,11 +417,37 @@ class TestLoader():
 
         return frameInds
 
+def buildSeqTrainLoader(args,audioLen):
+
+    train_dataset = SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
+                                        (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots,args.avg_scene_len)
+    sampler = Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
+    trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
+                      pin_memory=False,num_workers=args.num_workers)
+
+    return trainLoader,train_dataset
+
+def buildFrameTrainLoader(args):
+
+    train_dataset = VideoFrameDataset(args.dataset_train,args.train_part_beg,args.train_part_end,(args.img_width,args.img_heigth),args.resize_image,args.max_shots)
+    adv_dataset = VideoFrameDataset(args.dataset_adv,args.adv_part_beg,args.adv_part_end,(args.img_width,args.img_heigth),args.resize_image,args.max_shots)
+
+    nbVideosTr,nbVideosAdv = len(train_dataset.videoPaths),len(adv_dataset.videoPaths)
+
+    #The number of shot is increased by nbVideosTr//nbVideosAdv to make as much iterations as with the Sequence loader
+    sampler = AdvSampler(nbVideosAdv,train_dataset.nbShots,args.adv_batch_size,args.l_max)
+    trainLoader = torch.utils.data.DataLoader(dataset=adv_dataset,batch_size=args.adv_batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
+                      pin_memory=False,num_workers=args.num_workers)
+
+    return trainLoader
+
 def findVideos(dataset,propStart,propEnd):
+
     videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
     videoPaths = list(filter(lambda x:x.find(".wav") == -1,videoPaths))
     videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
     videoPaths = np.array(videoPaths)[int(propStart*len(videoPaths)):int(propEnd*len(videoPaths))]
+
     return videoPaths
 
 def readAudio(audioData,i,fps,fs,audio_len):
@@ -511,19 +530,28 @@ def addArgs(argreader):
                         help='The batchsize to use for training')
     argreader.parser.add_argument('--val_batch_size', type=int,metavar='BS',
                         help='The batchsize to use for validation')
+    argreader.parser.add_argument('--adv_batch_size', type=int,metavar='BS',
+                        help='The batchsize to use for adversarial loss')
+
     argreader.parser.add_argument('--l_min', type=int,metavar='LMIN',
                         help='The minimum length of a training sequence')
     argreader.parser.add_argument('--l_max', type=int,metavar='LMAX',
                         help='The maximum length of a training sequence')
     argreader.parser.add_argument('--val_l', type=int,metavar='LMAX',
                         help='Length of sequences for validation.')
-    argreader.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-    argreader.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
-    argreader.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can be \'OVSD\', \'PlanetEarth\' or \'RAIDataset\'.')
+    argreader.parser.add_argument('--dataset_train', type=str, metavar='N',help='the dataset to train. Can be \'OVSD\', \'bbc\',\'bbc2\', \'youtube_large\', \'Holly2\'.')
+    argreader.parser.add_argument('--dataset_val', type=str, metavar='N',help='the dataset to validate. Can have the same values as --dataset_train.')
+    argreader.parser.add_argument('--dataset_test', type=str, metavar='N',help='the dataset to testing. Can have the same values as --dataset_train.')
+    argreader.parser.add_argument('--dataset_adv', type=str, metavar='N',help='the dataset for adversarial loss. A MLP will try to discriminate images \
+                                                                                coming from the training dataset (--dataset_train) and from this dataset.\
+                                                                                This is ignored if no adversarial loss is to be used (i.e. --adv_weight is set to 0 (see \
+                                                                                trainVal.py)). It can have the same values as --dataset_train.')
+
     argreader.parser.add_argument('--img_width', type=int,metavar='WIDTH',
                         help='The width of the resized images, if resize_image is True, else, the size of the image')
     argreader.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
                         help='The height of the resized images, if resize_image is True, else, the size of the image')
+
     argreader.parser.add_argument('--train_part_beg', type=float,metavar='START',
                         help='The (normalized) start position of the dataset to use for training')
     argreader.parser.add_argument('--train_part_end', type=float,metavar='END',
@@ -536,6 +564,11 @@ def addArgs(argreader):
                         help='The (normalized) start position of the dataset to use for testing')
     argreader.parser.add_argument('--test_part_end', type=float,metavar='END',
                         help='The (normalized) end position of the dataset to use for testing')
+    argreader.parser.add_argument('--adv_part_beg', type=float,metavar='START',
+                        help='The (normalized) start position of the dataset to use for adversarial loss')
+    argreader.parser.add_argument('--adv_part_end', type=float,metavar='END',
+                        help='The (normalized) end position of the dataset to use for adversarial loss')
+
     argreader.parser.add_argument('--resize_image', type=args.str2bool, metavar='S',
                         help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
     argreader.parser.add_argument('--max_shots', type=int,metavar='NOTE',
