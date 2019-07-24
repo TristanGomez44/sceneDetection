@@ -357,7 +357,6 @@ def main(argv=None):
             frameNb = int(float(pims.Video(path)._duration)*fps)-1
 
             #Extract shots
-            print("../data/bbc2/{}/result.csv".format(vidName))
             if not os.path.exists("../data/bbc2/{}/result.csv".format(vidName)):
                 shotCSV = detect_format_shots(path,args.shot_thres,frameNb,fps)
                 if not os.path.exists("../data/bbc2/{}/".format(vidName)):
@@ -370,7 +369,6 @@ def main(argv=None):
 
             #Randomly generates scenes:
             starts = generateRandomScenes(shotNb,float(args.format_bbc2[1]))
-            print(starts,shotNb)
             ends = np.concatenate((starts[1:]-1,[shotNb-1]),axis=0)
             starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
             #The scene boundaries expressed with shot index
@@ -378,7 +376,7 @@ def main(argv=None):
             #The scene boundaries expressed with frame index
             scenesF = processResults.shots_to_frames("../data/bbc2/{}/result.xml".format(vidName),scenesS)
 
-            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
+            np.savetxt("../data/bbc2/annotations/{}_scenes.txt".format(vidName),scenesF)
 
     if args.format_ovsd:
 
