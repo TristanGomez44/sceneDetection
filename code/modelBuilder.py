@@ -150,13 +150,14 @@ class Discriminator(nn.Module):
         self.lin3 = nn.Linear(128,1)
 
         self.relu = nn.ReLU()
+        self.sigmo = nn.Sigmoid()
         self.dropout = nn.Dropout(p=0.5)
 
     def forward(self,x):
 
         x = self.dropout(self.relu(self.lin1(x)))
         x = self.dropout(self.relu(self.lin2(x)))
-        return self.relu(self.lin3(x))
+        return self.sigmo(self.lin3(x))
 
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
@@ -435,21 +436,21 @@ class SceneDet(nn.Module):
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
         if featModelName=="resnet50" or featModelName=="resnet101":
-            nbFeat = 256*2**(layFeatCut-1)
+            self.nbFeat = 256*2**(layFeatCut-1)
         elif featModelName=="resnet18":
-            nbFeat = 64*2**(layFeatCut-1)
+            self.nbFeat = 64*2**(layFeatCut-1)
         elif featModelName=="googLeNet":
-            nbFeat = 1024
+            self.nbFeat = 1024
         else:
             raise ValueError("Unkown feat model type : ",featModelName)
 
         if not self.audioFeatModel is None:
-            nbFeat += 128
+            self.nbFeat += 128
 
-        self.frameAtt = FrameAttention(nbFeat,frameAttRepSize)
+        self.frameAtt = FrameAttention(self.nbFeat,frameAttRepSize)
 
         if self.temp_model == "RNN":
-            self.tempModel = LSTM_sceneDet(nbFeat,hiddenSize,layerNb,dropout,bidirect)
+            self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("net") != -1:
             self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,\
                                             scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,sceneLenCnnPool=sceneLenCnnPool)
@@ -470,7 +471,7 @@ class SceneDet(nn.Module):
         '''
 
         x = self.computeFeat(x,audio,h,c)
-
+        self.features = x
         return self.computeScore(x,h,c,gt)
 
     def computeFeat(self,x,audio,h=None,c=None):
