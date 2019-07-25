@@ -19,6 +19,46 @@ import load_data
 import modelBuilder
 import scipy as sp
 
+def resultTables(exp_id,modelIds,thresList,epochList,dataset):
+
+    videoPaths = load_data.findVideos(dataset,0,1)
+    videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
+
+    #This csv will contain the means metric
+    metrDict = {"F-score":0,"IoU":0,"DED":0}
+    csvMeans = "Model,"+",".join([metric for metric in metrDict.keys()])+"\n"
+
+    for i,modelId in enumerate(modelIds):
+
+        metrDict = {"F-score":np.zeros(len(videoNames)),"IoU":np.zeros(len(videoNames)),"DED":np.zeros(len(videoNames))}
+        #This csv wil contain the performance for each video
+        csvVids = "Video,"+",".join([metricName for metricName in metrDict.keys()])+"\n"
+
+        for j,videoName in enumerate(videoNames):
+
+            target = load_data.getGT(dataset,videoName).astype(int)
+            scores = np.genfromtxt("../results/{}/{}_epoch{}_{}.csv".format(exp_id,modelId,epochList[i],videoName))[:,1]
+            pred = (scores > thresList[i]).astype(int)
+
+            iou,_,_,f_score,ded = binaryToFullMetrics(torch.tensor(pred).unsqueeze(0),torch.tensor(target).unsqueeze(0))
+
+            metrDict["F-score"][j] = f_score
+            metrDict["IoU"][j] = iou
+            metrDict["DED"][j] = ded
+
+            csvVids += videoName+","+",".join([str(f_score),str(iou),str(ded)])+"\n"
+
+        with open("../results/{}/{}_{}_metrics.csv".format(exp_id,modelId,dataset),"w") as text_file:
+            print(csvVids,file=text_file)
+
+        for metricName in metrDict.keys():
+            metrDict[metricName] = "{} \pm {}".format(metrDict[metricName].mean(),metrDict[metricName].std())
+
+        csvMeans += modelId+","+",".join([metrDict[metricName] for metricName in metrDict.keys()])+"\n"
+
+    with open("../results/{}/{}_metrics.csv".format(exp_id,dataset),"w") as text_file:
+        print(csvMeans,file=text_file)
+
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     '''
     Plot the representations of the shots of a video in a 2D space using t-sne algorithm. Each point represents a shot,
@@ -86,45 +126,6 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
         else:
             print("\tFeature for video {} does not exist".format(videoName))
 
-def compGT(exp_id,metric,thres):
-    ''' Evaluate all the models of an experiment on all the video parsed by this model
-
-    Args:
-    - exp_id (str): the experience name
-    - metric (str): can only be 'IoU' for now
-    - thres (float): the score threshold to determine which score is sufficient to say \
-                    that there is a scene change
-
-    '''
-
-    modelIniPaths = glob.glob("../models/{}/*.ini".format(exp_id))
-    metricFunc = globals()[metric]
-
-    csv = "modelId,"+metric+"\n"
-
-    for modelIniPath in modelIniPaths:
-
-        modelId = os.path.basename(modelIniPath.replace(".ini",""))
-
-        sceneCutsPathList = glob.glob("../results/{}/{}_*.csv".format(exp_id,modelId))
-        metricsArr=np.zeros(len(sceneCutsPathList))
-        for i,sceneCutsPath in enumerate(sceneCutsPathList):
-
-            vidName = "_".join(os.path.basename(sceneCutsPath).split("_")[:-1])
-
-            gtCuts = np.genfromtxt("../data/{}_cuts.csv".format(vidName))
-            sceneCuts = (np.genfromtxt(sceneCutsPath) > thres)
-
-            metricsArr[i] = metricFunc(gtCuts,sceneCuts)
-
-        metrics_mean = metricsArr.mean()
-        metrics_std = metricsArr.std()
-
-        csv += modelId+","+str(metrics_mean)+"\pm"+str(metrics_std)+"\n"
-
-    with open("../results/{}/{}.csv".format(exp_id,metric),"w") as csvFile:
-        print(csv,file=csvFile)
-
 def binaryToMetrics(pred,target):
     ''' Computes metrics of a predicted scene segmentation using a gt and a prediction encoded in binary format
 
@@ -164,15 +165,15 @@ def binaryToMetrics(pred,target):
 
     return cov_val,overflow_val,iou_val
 
-def binaryToFullMetrics(pred,target):
+def binaryToFullMetrics(predBin,targetBin):
     ''' Computes the IoU of a predicted scene segmentation using a gt and a prediction encoded in binary format
 
     This computes IoU relative to prediction and to ground truth and also computes the mean of the two. \
 
     Args:
-    - pred (list): the predicted scene segmentation. It is a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
+    - predBin (list): the predicted scene segmentation. It is a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
                     the shot is the first shot of a new scene.
-    - target (list): the ground truth scene segmentation. Formated the same way as pred.
+    - targetBin (list): the ground truth scene segmentation. Formated the same way as pred.
 
 
     '''
@@ -180,10 +181,10 @@ def binaryToFullMetrics(pred,target):
     predBounds = []
     targBounds = []
 
-    for i in range(len(pred)):
+    for i in range(len(predBin)):
 
-        pred_bounds = binaryToSceneBounds(pred[i])
-        targ_bounds = binaryToSceneBounds(target[i])
+        pred_bounds = binaryToSceneBounds(predBin[i])
+        targ_bounds = binaryToSceneBounds(targetBin[i])
 
         #print("pred",pred_bounds)
         #print("targ",targ_bounds)
@@ -192,24 +193,26 @@ def binaryToFullMetrics(pred,target):
             predBounds.append(pred_bounds)
             targBounds.append(targ_bounds)
 
-    iou,iou_pred,iou_gt,over,cover = 0,0,0,0,0
-    for pred,targ in zip(predBounds,targBounds):
+    iou,iou_pred,iou_gt,over,cover,ded = 0,0,0,0,0,0
+    for i,(pred,targ) in enumerate(zip(predBounds,targBounds)):
 
         iou_pred += IoU_oneRef(np.array(targ),np.array(pred))
         iou_gt += IoU_oneRef(np.array(pred),np.array(targ))
         iou += iou_pred*0.5+iou_gt*0.5
         over += overflow(np.array(targ),np.array(pred))
         cover += coverage(np.array(targ),np.array(pred))
+        ded += computeDED(targetBin[i].unsqueeze(0),predBin[i].unsqueeze(0))
 
     iou_pred /= len(targBounds)
     iou_gt /= len(targBounds)
     iou /= len(targBounds)
     over /= len(targBounds)
     cover /= len(targBounds)
+    ded /= len(targBounds)
 
     f_score = 2*cover*(1-over)/(cover+1-over)
 
-    return iou,iou_pred,iou_gt,f_score
+    return iou,iou_pred,iou_gt,f_score,ded
 
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
@@ -489,8 +492,6 @@ def computeDED(segmA,segmB):
          1 if the shot starts a new scene. 0 else.
         - segmB (array) another scene segmentation in the same format as segmA.
      """
-
-
     segmA,segmB = torch.cumsum(segmA,dim=-1),torch.cumsum(segmB,dim=-1)
 
     ded = 0
@@ -977,7 +978,7 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
                 pred = (scores > thres)
 
-                iou,iou_pred,iou_gt,f_sco = binaryToFullMetrics(pred[np.newaxis,:],gt[np.newaxis,:])
+                iou,iou_pred,iou_gt,f_sco,_ = binaryToFullMetrics(pred[np.newaxis,:],gt[np.newaxis,:])
 
                 iou_mean += iou
                 iou_pred_mean += iou_pred
@@ -1046,14 +1047,6 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--comp_gt',action='store_true',help='To compare the performance of models in an experiment with the ground truth. The --exp_id argument\
-                                    must be set. ')
-
-    argreader.parser.add_argument('--compt_gt_true_baseline',nargs=2,type=str,help='To compare the performance of the true segmentation sent by the IBM reseacher \
-                                    compared to ground truth. The first value is the path to the folder containing the segmentation for each video.\
-                                    The second value is the outpath where the metrics for each video will be written.\
-                                    The dataset argument must also be set.')
-
     argreader.parser.add_argument('--frame',action='store_true',help='To compute the metrics at the frame level.')
 
     argreader.parser.add_argument('--metric',type=str,default="IoU",metavar='METRIC',help='The metric to use. Can only be \'IoU\' for now.')
@@ -1082,6 +1075,13 @@ def main(argv=None):
                                                                             - the id of the model \
                                                                             - the epoch at which the model has been evaluated.')
 
+    argreader.parser.add_argument('--results_table',action="store_true",help='To write the metric value for several models. The arguments that must be set are \
+                                                                            --exp_id, --model_ids, --thres_list, --epoch_list and --dataset_test')
+
+    argreader.parser.add_argument('--model_ids',type=str,nargs="*",help='The list of model ids (useful for the --results_table argument')
+    argreader.parser.add_argument('--thres_list',type=float,nargs="*",help='The list of decision threshold (useful for the --results_table argument')
+    argreader.parser.add_argument('--epoch_list',type=int,nargs="*",help='The list of epoch at which is model is evaluated (useful for the --results_table argument')
+
     argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
@@ -1090,10 +1090,6 @@ def main(argv=None):
     #Getting the args from command line and config file
     args = argreader.args
 
-    if args.comp_gt:
-        compGT(args.exp_id,args.metric)
-    if args.compt_gt_true_baseline:
-        comptGT_trueBaseline(args.compt_gt_true_baseline[0],args.exp_id,args.dataset_test,args.compt_gt_true_baseline[1],args.frame)
     if args.tsne:
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed,args.frames_per_shot)
     if args.score_vis_video:
@@ -1112,5 +1108,8 @@ def main(argv=None):
         evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd,thresMin,thresMax)
     if args.bbc_annot_dist:
         bbcAnnotDist(args.bbc_annot_dist[0],args.bbc_annot_dist[1],args.bbc_annot_dist[2],args.bbc_annot_dist[3])
+    if args.results_table:
+        resultTables(args.exp_id,args.model_ids,args.thres_list,args.epoch_list,args.dataset_test)
+
 if __name__ == "__main__":
     main()
