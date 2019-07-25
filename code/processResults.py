@@ -17,6 +17,7 @@ import subprocess
 from skimage.transform import resize
 import load_data
 import modelBuilder
+import scipy as sp
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     '''
@@ -480,6 +481,150 @@ def minus(a,b):
 
     return totalLen
 
+def computeDED(segmA,segmB):
+    """ Computes the differential edit distance.
+
+    Args:
+        - segmA (array) a scene segmentation in the binary format. There is one binary digit per shot.\
+         1 if the shot starts a new scene. 0 else.
+        - segmB (array) another scene segmentation in the same format as segmA.
+     """
+
+
+    segmA,segmB = torch.cumsum(segmA,dim=-1),torch.cumsum(segmB,dim=-1)
+
+    ded = 0
+
+    #For each example in the batch
+    for i in range(len(segmA)):
+
+        #It is required that segmA is the sequence with the greatest number of scenes
+        if segmB[i].max() > segmA[i].max():
+            segmA[i],segmB[i] = segmB[i],segmA[i]
+        else:
+            segmA[i],segmB[i] = segmA[i],segmB[i]
+        occMat = torch.zeros((torch.max(segmB[i])+1,torch.max(segmA[i])+1))
+        for j in range(len(segmA[i])):
+            occMat[segmB[i][j],segmA[i][j]] += 1
+
+        costMat = torch.max(occMat)-occMat
+
+        assign = sp.optimize.linear_sum_assignment(costMat)
+
+        correctAssignedShots = np.array([occMat[p[0],p[1]] for p in zip(assign[0],assign[1])]).sum()
+
+        ded += (len(segmB[i])-correctAssignedShots)/len(segmB[i])
+
+    return ded/len(segmA)
+
+def bbcAnnotDist(annotFold,modelExpId,modelId,modelEpoch):
+
+    #The number and names of episodes
+    epiNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),sorted(glob.glob(annotFold+"/scenes/annotator_0/*.txt"))))
+    epNb = len(epiNames)
+    #The number of annotators
+    annotNb = len(list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),sorted(glob.glob(annotFold+"/scenes/annotator_*/")))))
+    distMat = -np.ones((epNb,annotNb+1,annotNb+1))
+    for i in range(epNb):
+
+        shotNb = np.genfromtxt("../data/bbc/{}/result.csv".format(i)).shape[0]
+
+        for j in range(annotNb+1):
+
+            distMat[i,j,j] = 0
+            for k in range(j):
+                segmJ,segmK = readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb)
+
+                distMat[i,j,k] = computeDED(torch.tensor(segmJ).unsqueeze(0),torch.tensor(segmK).unsqueeze(0))
+        for j in range(annotNb+1):
+            for k in range(j,annotNb+1):
+                distMat[i,j,k] = distMat[i,k,j]
+
+        plotHeatMapWithValues(distMat[i],"../vis/bbc_annnotDED_ep{}_w{}.png".format(i,modelId))
+    plotHeatMapWithValues(distMat.mean(axis=0),"../vis/bbc_annnotDED_allEp_w{}.png".format(modelId))
+
+def readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb):
+
+    if j==annotNb:
+        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
+        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb,segmK.sum())
+    elif k==annotNb:
+        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
+        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb,segmJ.sum())
+    else:
+        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
+        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
+
+    return segmJ,segmK
+
+def getPath(annotFold,modelExpId,modelId,modelEpoch,epiInd,epiNames,annotationInd,annotatorNb):
+
+    if annotationInd < annotatorNb:
+        return annotFold+"/scenes/annotator_{}/{}.txt".format(annotationInd,epiNames[epiInd])
+    else:
+        return "../results/{}/{}_epoch{}_{}.csv".format(modelExpId,modelId,modelEpoch,epiInd)
+
+def plotHeatMapWithValues(mat,path):
+    # Limits for the extent
+    x_start = 0.0
+    x_end = mat.shape[0]
+    y_start = 0
+    y_end = mat.shape[1]
+
+    extent = [x_start, x_end, y_start, y_end]
+
+    size = mat.shape[0]
+
+    # The normal figure
+    fig = plt.figure(figsize=(16, 12))
+    ax = fig.add_subplot(111)
+    im = ax.imshow(mat, extent=extent, origin='lower', interpolation='None', cmap='viridis')
+
+    # Add the text
+    jump_x = (x_end - x_start) / (2.0 * size)
+    jump_y = (y_end - y_start) / (2.0 * size)
+    x_positions = np.linspace(start=x_start, stop=x_end, num=size, endpoint=False)
+    y_positions = np.linspace(start=y_start, stop=y_end, num=size, endpoint=False)
+
+    for y_index, y in enumerate(y_positions):
+        for x_index, x in enumerate(x_positions):
+            label = round(mat[y_index, x_index],2)
+            text_x = x + jump_x
+            text_y = y + jump_y
+            ax.text(text_x, text_y, label, color='black', ha='center', va='center',fontsize='xx-large')
+
+    fig.colorbar(im)
+    plt.savefig(path)
+
+def ToBinary(segmPath,shotNb,targetNbScene=None):
+    ''' Read and convert a scene segmentation from the format given in the BBC dataset (list of starts on one line)
+    into the binary format (list of 0 and 1, with one where the scene is changing).
+
+    It also read segmentation in the model format, which is the format produced after the eval function of trainVal.py
+
+    '''
+    segm = np.genfromtxt(segmPath)
+
+    if np.isnan(segm).any():
+        segm = np.genfromtxt(segmPath,delimiter=",")[:-1]
+        binary = np.zeros(shotNb)
+        binary[segm.astype(int)] = 1
+        binary[0] = 0
+        return binary.astype(int)
+    else:
+        #Finding the threshold to get a number of scene as close as possible from the desired number
+        thres = 1
+        nbScene = 0
+        while nbScene <  targetNbScene:
+            thres -= 0.05
+            precNbScene = nbScene
+            nbScene = (segm[:,1]>thres).sum()
+
+        if np.abs(precNbScene-targetNbScene)<np.abs(nbScene-targetNbScene):
+            thres += 0.05
+
+        return (segm[:,1]>thres).astype(int)
+
 def continuousIoU(batch,gt):
 
     ious = torch.empty(len(batch),requires_grad=False)
@@ -730,7 +875,7 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
             fig.gca().add_artist(legend)
 
             plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
-            sys.exit(0)
+
         else:
             raise ValueError("Unkown video : ",path)
 
@@ -929,6 +1074,14 @@ def main(argv=None):
                                     The values of this args are the epochs at which to start and end the plot, followed by the minimum and maximum decision threshold \
                                     to evaluate.')
 
+    argreader.parser.add_argument('--bbc_annot_dist',type=str,nargs=4,help='To comute the differential edit distance (DED) between annotators of the BBC dataset and one model. \
+                                                                            It requires to have already evaluated the model on the bbc database.\
+                                                                            The values of the arg are the following :\
+                                                                            - is the path to the BBC annnotation folder downloaded.\
+                                                                            - the exp_id of the model \
+                                                                            - the id of the model \
+                                                                            - the epoch at which the model has been evaluated.')
+
     argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
@@ -957,6 +1110,7 @@ def main(argv=None):
         thresMin = args.eval_model[2]
         thresMax = args.eval_model[3]
         evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd,thresMin,thresMax)
-
+    if args.bbc_annot_dist:
+        bbcAnnotDist(args.bbc_annot_dist[0],args.bbc_annot_dist[1],args.bbc_annot_dist[2],args.bbc_annot_dist[3])
 if __name__ == "__main__":
     main()

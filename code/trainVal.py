@@ -31,7 +31,7 @@ plt.switch_backend('agg')
 import sys
 from PIL import Image
 
-import scipy as sp
+
 def addSparsTerm(loss,args,output):
 
     #Adding sparsity term
@@ -143,34 +143,6 @@ def softTarget(predBatch,targetBatch,width):
 
     return softTargetBatch
 
-def computeDED(segmA,segmB):
-
-    segmA,segmB = torch.cumsum(segmA,dim=-1),torch.cumsum(segmB,dim=-1)
-
-    ded = 0
-
-    #For each example in the batch
-    for i in range(len(segmA)):
-
-        #It is required that segmA is the sequence with the greatest number of scenes
-        if segmB[i].max() > segmA[i].max():
-            segmA[i],segmB[i] = segmB[i],segmA[i]
-        else:
-            segmA[i],segmB[i] = segmA[i],segmB[i]
-
-        occMat = torch.zeros((torch.max(segmB[i])+1,torch.max(segmA[i])+1))
-        for j in range(len(segmA[i])):
-            occMat[segmB[i][j],segmA[i][j]] += 1
-
-        occMat = torch.max(occMat)-occMat
-        assign = sp.optimize.linear_sum_assignment(occMat)
-
-        correctAssignedShots = np.array([occMat[p[0],p[1]] for p in zip(assign[0],assign[1])]).sum()
-
-        ded += (len(segmB[i])-correctAssignedShots)/len(segmB[i])
-
-    return ded/len(segmA)
-
 def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwargs):
     ''' Train a model during one epoch
 
@@ -262,7 +234,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
             metrDict["Disc Accuracy"] += discMeanAcc
             metrDict["Dist Pos"] += distPos
             metrDict["Dist Neg"] += distNeg
-            metrDict["DED"] += computeDED(output.data>0.5,target.long())
+            metrDict["DED"] += processResults.computeDED(output.data>0.5,target.long())
 
             #Store the f score of each example
             updateHMDict(hmDict,cov,overflow,vidNames)
@@ -336,7 +308,7 @@ def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metr
     metrDict["True F-score"] += 2*cov*(1-overflow)/(cov+1-overflow)
     metrDict["IoU"] += iou
     metrDict["AuC"] += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
-    metrDict['DED'] += computeDED(allOutput.data>0.5,allTarget.long())
+    metrDict['DED'] += processResults.computeDED(allOutput.data>0.5,allTarget.long())
 
     nbVideos += 1
 
