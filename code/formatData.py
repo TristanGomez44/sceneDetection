@@ -20,7 +20,7 @@ import sys
 import shotdetect
 import shutil
 import pims
-
+import h5py
 from torch.distributions.gamma import Gamma
 
 def main(argv=None):
@@ -40,6 +40,8 @@ def main(argv=None):
 
     argreader.parser.add_argument('--format_ovsd',action='store_true',help='Format the OVSD dataset')
     argreader.parser.add_argument('--shot_thres',type=float, default=0.1,metavar='EXT',help='The detection threshold for the shot segmentation done by ffmpeg')
+    argreader.parser.add_argument('--format_ally_mcbeal',type=str,metavar="EXT",help='Format the Ally McBeal dataset. \
+                                            The value is the extension of the video file. E.g : \"--format_ally_mcbeal avi\".')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -409,6 +411,59 @@ def main(argv=None):
 
             #Extract audio
             extractAudio(path)
+
+    if args.format_ally_mcbeal:
+
+        videoPaths = sorted(glob.glob("../data/AllyMcBeal/*.{}".format(args.format_ally_mcbeal)))
+        rawAnnotationFilePaths = sorted(glob.glob("../data/AllyMcBeal/Ally_McBeal.Annotations-1.1/*.pio"))
+
+        if not os.path.exists("../data/allymcbeal/annotations"):
+            os.makedirs("../data/allymcbeal/annotations")
+
+        for i,videoPath in enumerate(videoPaths):
+            print(videoPath,rawAnnotationFilePaths[i])
+
+            videoName = i
+            newVideoPath = "../data/allymcbeal/{}.{}".format(videoName,args.format_ally_mcbeal)
+            videoFold = os.path.splitext(newVideoPath)[0]
+
+            #Copy video
+            if not os.path.exists(newVideoPath):
+                shutil.copyfile(videoPath,newVideoPath)
+
+            if not os.path.exists(videoFold):
+                os.makedirs(videoFold)
+
+            fps = processResults.getVideoFPS(newVideoPath)
+            frameNb = round(float(pims.Video(newVideoPath)._duration)*fps)
+
+            #Extract shots
+            tripletToInterv(rawAnnotationFilePaths[i],"shots",fps,frameNb,videoFold+"/result.csv")
+            #Extract scenes
+            tripletToInterv(rawAnnotationFilePaths[i],"scenes",fps,frameNb,"../data/allymcbeal/annotations/{}_scenes.txt".format(i))
+
+
+def tripletToInterv(h5FilePath,segKey,fps,frameNb,savePath):
+    """ Convert from the format found in the h5py files (i.e. the Ally McBeal annotations \
+    into the intervals format """
+
+    tripletList = h5py.File(h5FilePath, 'r')["timeline"]["segmentation"][segKey]
+
+    intervCSV = []
+    for triplet in tripletList:
+        start,end = triplet[0]/triplet[2],(triplet[0]+triplet[1])/triplet[2]
+        intervCSV.append([start,end])
+
+    intervCSV = (np.array(intervCSV)*fps).astype(int)
+
+    if intervCSV[0,0] != 0:
+        intervCSV = np.concatenate(([[0,intervCSV[0,0]-1]],intervCSV),axis=0)
+    if intervCSV[-1,1] != frameNb -1:
+        intervCSV = np.concatenate((intervCSV,[[intervCSV[-1,1]+1,frameNb-1]]),axis=0)
+
+    intervCSV = removeHoles(intervCSV)
+
+    np.savetxt(savePath,intervCSV)
 
 def getNbFrames(path):
     pimsVid = pims.Video(path)
