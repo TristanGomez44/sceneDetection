@@ -19,7 +19,7 @@ import load_data
 import modelBuilder
 import scipy as sp
 
-def resultTables(exp_id,modelIds,thresList,epochList,dataset):
+def resultTables(exp_ids,modelIds,thresList,epochList,dataset):
 
     videoPaths = load_data.findVideos(dataset,0,1)
     videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
@@ -37,18 +37,18 @@ def resultTables(exp_id,modelIds,thresList,epochList,dataset):
         for j,videoName in enumerate(videoNames):
 
             target = load_data.getGT(dataset,videoName).astype(int)
-            scores = np.genfromtxt("../results/{}/{}_epoch{}_{}.csv".format(exp_id,modelId,epochList[i],videoName))[:,1]
+            scores = np.genfromtxt("../results/{}/{}_epoch{}_{}.csv".format(exp_ids[i],modelId,epochList[i],videoName))[:,1]
             pred = (scores > thresList[i]).astype(int)
 
-            iou,_,_,f_score,ded = binaryToFullMetrics(torch.tensor(pred).unsqueeze(0),torch.tensor(target).unsqueeze(0))
+            metrDictVid = binaryToAllMetrics(torch.tensor(pred).unsqueeze(0),torch.tensor(target).unsqueeze(0))
 
-            metrDict["F-score"][j] = f_score
-            metrDict["IoU"][j] = iou
-            metrDict["DED"][j] = ded
+            metrDict["F-score"][j] = metrDictVid["F-score"]
+            metrDict["IoU"][j] = metrDictVid["IoU"]
+            metrDict["DED"][j] = metrDictVid["DED"]
 
             csvVids += videoName+","+",".join([str(f_score),str(iou),str(ded)])+"\n"
 
-        with open("../results/{}/{}_{}_metrics.csv".format(exp_id,modelId,dataset),"w") as text_file:
+        with open("../results/{}/{}_{}_metrics.csv".format(exp_ids[i],modelId,dataset),"w") as text_file:
             print(csvVids,file=text_file)
 
         for metricName in metrDict.keys():
@@ -56,7 +56,7 @@ def resultTables(exp_id,modelIds,thresList,epochList,dataset):
 
         csvMeans += modelId+","+",".join([metrDict[metricName] for metricName in metrDict.keys()])+"\n"
 
-    with open("../results/{}/{}_metrics.csv".format(exp_id,dataset),"w") as text_file:
+    with open("../results/{}_metrics.csv".format(dataset),"w") as text_file:
         print(csvMeans,file=text_file)
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
@@ -116,7 +116,6 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
                 colorInds = ((gt_interv[:,0].reshape(-1,1) <= frameInd.reshape(1,-1))*(frameInd.reshape(1,-1) <= gt_interv[:,1].reshape(-1,1))).nonzero()[0]
 
                 repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(reps)
-                #print(repr_tsne.shape)
                 plt.figure()
                 plt.title("T-SNE view of feature from {}".format(videoName))
                 plt.scatter(repr_tsne[:,0],repr_tsne[:,1], zorder=2,color=cmap[colorInds])
@@ -134,7 +133,6 @@ def binaryToMetrics(pred,target):
                     the shot is the first shot of a new scene.
     - target (list): the ground truth scene segmentation. Formated the same way as pred.
 
-
     '''
 
     predBounds = []
@@ -144,9 +142,6 @@ def binaryToMetrics(pred,target):
 
         pred_bounds = binaryToSceneBounds(pred[i])
         targ_bounds = binaryToSceneBounds(target[i])
-
-        #print("pred",pred_bounds)
-        #print("targ",targ_bounds)
 
         if len(targ_bounds) > 1:
             predBounds.append(pred_bounds)
@@ -165,7 +160,7 @@ def binaryToMetrics(pred,target):
 
     return cov_val,overflow_val,iou_val
 
-def binaryToFullMetrics(predBin,targetBin):
+def binaryToAllMetrics(predBin,targetBin):
     ''' Computes the IoU of a predicted scene segmentation using a gt and a prediction encoded in binary format
 
     This computes IoU relative to prediction and to ground truth and also computes the mean of the two. \
@@ -185,9 +180,6 @@ def binaryToFullMetrics(predBin,targetBin):
 
         pred_bounds = binaryToSceneBounds(predBin[i])
         targ_bounds = binaryToSceneBounds(targetBin[i])
-
-        #print("pred",pred_bounds)
-        #print("targ",targ_bounds)
 
         if len(targ_bounds) > 1:
             predBounds.append(pred_bounds)
@@ -212,7 +204,7 @@ def binaryToFullMetrics(predBin,targetBin):
 
     f_score = 2*cover*(1-over)/(cover+1-over)
 
-    return iou,iou_pred,iou_gt,f_score,ded
+    return {"IoU":iou,"IoU_pred":iou_pred,"IoU_gt":iou_gt,"F-score":f_score,"DED":ded}
 
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
@@ -526,23 +518,37 @@ def bbcAnnotDist(annotFold,modelExpId,modelId,modelEpoch):
     #The number of annotators
     annotNb = len(list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),sorted(glob.glob(annotFold+"/scenes/annotator_*/")))))
     distMat = -np.ones((epNb,annotNb+1,annotNb+1))
+    distMat = {"DED":distMat.copy(),"IoU":distMat.copy(),"F-score":distMat.copy()}
+
     for i in range(epNb):
 
         shotNb = np.genfromtxt("../data/bbc/{}/result.csv".format(i)).shape[0]
 
         for j in range(annotNb+1):
 
-            distMat[i,j,j] = 0
-            for k in range(j):
+            for k in range(annotNb+1):
+
+                #This function will set the decision threshold of the model to make it predict aproximately
+                #as much scene as the human annotator did. It is necessary to adjust the threshold when using
+                #this metric because it favors models that predicts a few scenes (0 scenes gives a perfect scores)
                 segmJ,segmK = readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb)
+                distMat["DED"][i,j,k] = computeDED(torch.tensor(segmJ).unsqueeze(0),torch.tensor(segmK).unsqueeze(0))
 
-                distMat[i,j,k] = computeDED(torch.tensor(segmJ).unsqueeze(0),torch.tensor(segmK).unsqueeze(0))
-        for j in range(annotNb+1):
-            for k in range(j,annotNb+1):
-                distMat[i,j,k] = distMat[i,k,j]
+                segmJ = binaryToSceneBounds(ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb))
+                segmK = binaryToSceneBounds(ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb))
 
-        plotHeatMapWithValues(distMat[i],"../vis/bbc_annnotDED_ep{}_w{}.png".format(i,modelId))
-    plotHeatMapWithValues(distMat.mean(axis=0),"../vis/bbc_annnotDED_allEp_w{}.png".format(modelId))
+                over = overflow(np.array(segmJ),np.array(segmK))
+                cover = coverage(np.array(segmJ),np.array(segmK))
+                f_score = 2*cover*(1-over)/(cover+1-over)
+                distMat["F-score"][i,j,k] = f_score
+
+                distMat["IoU"][i,j,k] = (IoU_oneRef(np.array(segmJ),np.array(segmK))+IoU_oneRef(np.array(segmK),np.array(segmJ)))/2
+
+        for metric in distMat.keys():
+            plotHeatMapWithValues(distMat[metric][i],"../vis/bbc_annot{}_ep{}_w{}.png".format(metric,i,modelId))
+
+    for metric in distMat.keys():
+        plotHeatMapWithValues(distMat[metric].mean(axis=0),"../vis/bbc_annot{}_allEp_w{}.png".format(metric,modelId))
 
 def readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb):
 
@@ -595,7 +601,8 @@ def plotHeatMapWithValues(mat,path):
             ax.text(text_x, text_y, label, color='black', ha='center', va='center',fontsize='xx-large')
 
     fig.colorbar(im)
-    plt.savefig(path)
+    fig.savefig(path)
+    plt.close()
 
 def ToBinary(segmPath,shotNb,targetNbScene=None):
     ''' Read and convert a scene segmentation from the format given in the BBC dataset (list of starts on one line)
@@ -613,16 +620,19 @@ def ToBinary(segmPath,shotNb,targetNbScene=None):
         binary[0] = 0
         return binary.astype(int)
     else:
-        #Finding the threshold to get a number of scene as close as possible from the desired number
-        thres = 1
-        nbScene = 0
-        while nbScene <  targetNbScene:
-            thres -= 0.05
-            precNbScene = nbScene
-            nbScene = (segm[:,1]>thres).sum()
+        if not targetNbScene is None:
+            #Finding the threshold to get a number of scene as close as possible from the desired number
+            thres = 1
+            nbScene = 0
+            while nbScene <  targetNbScene:
+                thres -= 0.05
+                precNbScene = nbScene
+                nbScene = (segm[:,1]>thres).sum()
 
-        if np.abs(precNbScene-targetNbScene)<np.abs(nbScene-targetNbScene):
-            thres += 0.05
+            if np.abs(precNbScene-targetNbScene)<np.abs(nbScene-targetNbScene):
+                thres += 0.05
+        else:
+            thres = 0.5
 
         return (segm[:,1]>thres).astype(int)
 
@@ -821,7 +831,7 @@ def convScoPlot(weightFile):
     plt.plot(fft)
     plt.savefig("../vis/{}/model{}_epoch{}_fourrier.png".format(exp_id,model_id,epoch))
 
-def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_beg,test_part_end):
+def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_beg,test_part_end,plotDist=False):
 
     resFilePaths = sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)))
 
@@ -830,6 +840,9 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
     videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
     videoPaths = np.array(videoPaths)[int(test_part_beg*len(videoPaths)):int(test_part_end*len(videoPaths))]
     videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
+    print("../results/{}/{}_epoch*.csv".format(exp_id,model_id))
+
+    scoresNewScAll,scoresNoScAll,scoAccNewScAll,scoAccNoScAll = np.array([]),np.array([]),np.array([]),np.array([])
 
     for path in resFilePaths:
 
@@ -843,16 +856,10 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
 
             scores = np.genfromtxt(path)[:,1]
 
-            #gt = np.zeros(len(scores))
-            #gtScenes = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset_test,videoName))
-            #gtSceneStarts = np.array(frame_to_shots(dataset_test,"../data/{}/{}/result.xml".format(dataset_test,videoName),gtScenes))[:,0].astype(int)
-            #gt[gtSceneStarts] = 1
-
             gt = load_data.getGT(dataset_test,videoName)
 
             fig = plt.figure(figsize=(30,5))
             ax1 = fig.add_subplot(111)
-            ax2 = ax1.twinx()
 
             legHandles = []
 
@@ -865,28 +872,107 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
             #Plot the scores
             legHandles += ax1.plot(np.arange(len(scores)),scores,color="blue",label="Scene change score")
 
-            #Getting the epoch using the path
-            epoch = modelBuilder.findNumbers(path[path.find("epoch")+5:].split("_")[0])
+            plt.savefig("../vis/{}/Scores_{}.png".format(exp_id,fileName))
+            plt.close()
+            if plotDist:
+                fig = plt.figure(figsize=(30,5))
+                ax1 = fig.add_subplot(111)
 
-            #Plot the distance between the successive trained features
-            legHandles = plotFeat(exp_id,model_id,videoName,len(scores),"orange","Distance between shot trained representations",legHandles,ax2)
-            legHandles = plotFeat(exp_id_init,model_id_init,videoName,len(scores),"green","Distance between untrained shot representations",legHandles,ax2)
+                #Plot the distance between the successive features
+                legHandles,dists = plotFeat(exp_id,model_id,videoName,len(scores),"orange","Distance between shot trained representations",legHandles,ax1)
+                legHandles,_ = plotFeat(exp_id_init,model_id_init,videoName,len(scores),"green","Distance between untrained shot representations",legHandles,ax1)
 
-            legend = fig.legend(handles=legHandles, loc='center right' ,title="")
-            fig.gca().add_artist(legend)
+                legend = fig.legend(handles=legHandles, loc='center right' ,title="")
+                fig.gca().add_artist(legend)
 
-            plt.savefig("../vis/{}/{}.png".format(exp_id,fileName))
+                plt.savefig("../vis/{}/Dists_{}_.png".format(exp_id,fileName))
+                plt.close()
+
+                #The distance between the shot features and the preceding shot features
+                #is not defined for the first shot, so we remove it
+                plotHist(gt[1:],dists,exp_id,fileName,sigName="Distance",sigShortName="dist")
+
+            plotHist(gt,scores,exp_id,fileName,sigName="Score",sigShortName="sco")
+
+            scoAcc = scores[2:]-2*scores[1:-1]+scores[:-2]
+            plotHist(gt[1:-1],scoAcc,exp_id,fileName,sigName="Score Acceleration",sigShortName="scoAcc")
+
+            scoresNewSc, scoAccNewSc, scoresNoSc, scoAccNoSc = split_and_plot2Hist(gt[1:-1],scores[2:],scoAcc,exp_id,fileName,sigName1="Score",sigName2="Score Acceleration",sigShortName1="sco",sigShortName2="accSco")
+
+            scoresNewScAll = np.concatenate((scoresNewScAll,scoresNewSc),axis=0)
+            scoresNoScAll = np.concatenate((scoresNoScAll,scoresNoSc),axis=0)
+            scoAccNewScAll = np.concatenate((scoAccNewScAll,scoAccNewSc),axis=0)
+            scoAccNoScAll =np.concatenate((scoAccNoScAll,scoAccNoSc),axis=0)
 
         else:
             raise ValueError("Unkown video : ",path)
 
-def plotFeat(exp_id,model_id,videoName,nbShots,color,label,legHandles,ax):
-    featPaths = sorted(glob.glob("../results/{}/{}/*_{}.csv".format(exp_id,videoName,model_id)),key=modelBuilder.findNumbers)
-    feats = np.array(list(map(lambda x:np.genfromtxt(x),featPaths)))
-    dists = np.sqrt(np.power(feats[:-1]-feats[:1],2).sum(axis=1))
-    legHandles += ax.plot(np.arange(nbShots-1)+1,dists,color=color,label=label)
+    sig1Max,sig1Min = max(scoresNewScAll.max(),scoresNoScAll.max()),min(scoresNewScAll.min(),scoresNoScAll.min())
+    sig2Max,sig2Min = max(scoAccNewScAll.max(),scoAccNoScAll.max()),min(scoAccNewScAll.min(),scoAccNoScAll.min())
 
-    return legHandles
+    plot2DHist("Scores","Score acceleration","sco","scoAcc",scoresNewScAll,scoAccNewScAll,(sig1Min,sig1Max),(sig2Min,sig2Max),\
+                "Scores Score acceleration when scene change",exp_id,"allEp_newSc")
+
+    plot2DHist("Scores","Score acceleration","sco","scoAcc",scoresNoScAll,scoAccNoScAll,(sig1Min,sig1Max),(sig2Min,sig2Max),\
+                "Scores Score acceleration when no scene change",exp_id,"allEp_noSc")
+
+def plotHist(gt,signal,exp_id,fileName,sigName,sigShortName):
+    plt.figure()
+
+    newSceneInds = torch.tensor(gt.nonzero()[0])
+    noNewSceneInds = torch.tensor((1-gt).nonzero()[0])
+
+    signal_newScene = signal[newSceneInds]
+    signal_noNewScene = signal[noNewSceneInds]
+
+    sigMax = max(signal_newScene.max(),signal_noNewScene.max())
+    sigMin = min(signal_newScene.min(),signal_noNewScene.min())
+
+    plt.hist(signal_newScene,label="{} when scene change".format(sigName),alpha=0.5,range=(sigMin,sigMax),density=True,bins=30)
+    plt.hist(signal_noNewScene,label="{} when no scene change".format(sigName),alpha=0.5,range=(sigMin,sigMax),density=True,bins=30)
+    plt.legend()
+    plt.savefig("../vis/{}/Hist_{}_{}.png".format(exp_id,fileName,sigShortName))
+    plt.close()
+
+def plot2DHist(sigName1,sigName2,sigShortName1,sigShortName2,sig1,sig2,sig1Range,sig2Range,label,exp_id,fileName):
+
+    plt.figure()
+    plt.xlabel(sigName1)
+    plt.ylabel(sigName2)
+    plt.hist2d(sig1,sig2,label=label,range=[sig1Range,sig2Range],bins=30)
+    plt.legend()
+    plt.savefig("../vis/{}/2dHist_{}_{}_{}.png".format(exp_id,fileName,sigShortName1,sigShortName2))
+    plt.close()
+
+def split_and_plot2Hist(gt,signal1,signal2,exp_id,fileName,sigName1,sigName2,sigShortName1,sigShortName2):
+    plt.figure()
+
+    newSceneInds = torch.tensor(gt.nonzero()[0])
+    noNewSceneInds = torch.tensor((1-gt).nonzero()[0])
+
+    signal1_newSc,signal1_noSc = signal1[newSceneInds],signal1[noNewSceneInds]
+    signal2_newSc,signal2_noSc = signal2[newSceneInds],signal2[noNewSceneInds]
+
+    sig1Max,sig1Min = max(signal1_newSc.max(),signal1_noSc.max()),min(signal1_newSc.min(),signal1_noSc.min())
+    sig2Max,sig2Min = max(signal2_newSc.max(),signal2_noSc.max()),min(signal2_newSc.min(),signal2_noSc.min())
+
+
+    plot2DHist("Scores","Score acceleration","sco","scoAcc",signal1_newSc,signal2_newSc,(sig1Min,sig1Max),(sig2Min,sig2Max),\
+                "{} {} when scene change".format(sigName1,sigName2),exp_id,fileName+"_newSc")
+    plot2DHist("Scores","Score acceleration","sco","scoAcc",signal1_noSc,signal2_noSc,(sig1Min,sig1Max),(sig2Min,sig2Max),\
+                "{} {} when no scene change".format(sigName1,sigName2),exp_id,fileName+"_noSc")
+
+    return signal1_newSc, signal2_newSc, signal1_noSc, signal2_noSc
+
+def plotFeat(exp_id,model_id,videoName,nbShots,color,label,legHandles,ax1):
+    featPaths = sorted(glob.glob("../results/{}/{}/*_{}.csv".format(exp_id,videoName,model_id)),key=modelBuilder.findNumbers)
+
+    if len(featPaths) > 0:
+        feats = np.array(list(map(lambda x:np.genfromtxt(x),featPaths)))
+        dists = np.sqrt(np.power(feats[:-1]-feats[1:],2).sum(axis=1))
+        legHandles += ax1.plot(np.arange(nbShots-1)+1,dists,color=color,label=label)
+
+    return legHandles,dists
 
 def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
 
@@ -957,7 +1043,6 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
     ax_fsco.set_position([box.x0, box.y0, box.width * 0.7, box.height])
 
     for i,thres in enumerate(thresList):
-        print(thres)
 
         for k in range(lastEpoch-firstEpoch+1):
 
@@ -965,25 +1050,24 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
             iou_mean,iou_pred_mean,iou_gt_mean,f_sco_mean = 0,0,0,0
 
-            print("Epoch",k+firstEpoch,len(resFilePaths)," videos")
-
             for j,path in enumerate(resFilePaths):
 
                 fileName = os.path.basename(os.path.splitext(path)[0])
                 videoName = videoNameDict[path]
 
-                gt = load_data.getGT(dataset_test,videoName)
+                gt = load_data.getGT(dataset_test,videoName).astype(int)
                 #gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset_test,videoName)).astype(int)
                 scores = np.genfromtxt(path)[:,1]
 
-                pred = (scores > thres)
+                pred = (scores > thres).astype(int)
 
-                iou,iou_pred,iou_gt,f_sco,_ = binaryToFullMetrics(pred[np.newaxis,:],gt[np.newaxis,:])
+                metrDict = binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
 
-                iou_mean += iou
-                iou_pred_mean += iou_pred
-                iou_gt_mean += iou_gt
-                f_sco_mean += f_sco
+
+                iou_mean += metrDict["IoU"]
+                iou_pred_mean += metrDict["IoU_pred"]
+                iou_gt_mean += metrDict["IoU_gt"]
+                f_sco_mean +=  metrDict["F-score"]
 
             iouArr[i,k] = iou_mean/len(resFilePaths)
             iouArr_pred[i,k] = iou_pred_mean/len(resFilePaths)
@@ -1029,17 +1113,100 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
 
     bestInd = np.argmax(iouArr)
     bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
-    print("Best threshold for IoU: ",thresList[bestThresInd])
-    print("Best epoch : ",bestEpochInd+firstEpoch)
-    print("Best IoU's : ")
-    print(iouArr[bestThresInd])
+
+    print("Best IoU's : ",iouArr[bestThresInd],"epoch",bestEpochInd+firstEpoch,"threshold",round(thresList[bestThresInd],3),end=" ")
 
     bestInd = np.argmax(fscoArr)
     bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
-    print("Best threshold for F-score : ",thresList[bestThresInd])
-    print("Best epoch : ",bestEpochInd+firstEpoch)
-    print("Best F-scores : ")
-    print(fscoArr[bestThresInd])
+
+    print("Best F-scores : ",fscoArr[bestThresInd],"epoch",bestEpochInd+firstEpoch,"threshold",round(thresList[bestThresInd],2))
+
+def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres):
+
+    resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,epoch)),key=modelBuilder.findNumbers))
+    videoNameDict = buildVideoNameDict(dataset_test,0,1,resFilePaths)
+    resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
+
+    thresList = np.arange(firstThres,lastThres,step=(lastThres-firstThres)/10)
+
+    #Store the value of the f-score of for video and for each threshold
+    metTun = {}
+    metEval = {"IoU":    np.zeros(len(resFilePaths)),\
+               "F-score":np.zeros(len(resFilePaths)),\
+               "DED":    np.zeros(len(resFilePaths))}
+
+    metDef = {"IoU":    np.zeros(len(resFilePaths)),\
+              "F-score":np.zeros(len(resFilePaths)),\
+              "DED":    np.zeros(len(resFilePaths))}
+
+    for j,path in enumerate(resFilePaths):
+
+        fileName = os.path.basename(os.path.splitext(path)[0])
+        videoName = videoNameDict[path]
+
+        metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score")
+        metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU")
+        metEval["DED"][j],metDef["DED"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED")
+
+    printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
+
+    with open("../results/{}_metrics.csv".format(dataset_test),"a") as text_file:
+        if printHeader:
+            print("Model,Threshold tuning,F-score,IoU,DED",file=text_file)
+
+        print("\multirow{2}{*}{"+model_name+"}"+"&"+"Yes"+"&"+formatMetr(metEval["F-score"])+"&"+formatMetr(metEval["IoU"])+"&"+formatMetr(metEval["DED"])+"\\\\",file=text_file)
+        print("&"+"No"+"&"+formatMetr(metDef["F-score"])+"&"+formatMetr(metDef["IoU"])+"&"+formatMetr(metDef["DED"])+"\\\\",file=text_file)
+        print("\hline",file=text_file)
+
+    print("Best F-score : ",str(round(metEval["F-score"].mean(),2)),"Default F-score :",str(round(metDef["F-score"].mean(),2)),\
+          "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
+
+def findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric):
+    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric)
+
+    gt = load_data.getGT(dataset_test,videoName).astype(int)
+    scores = np.genfromtxt(path)[:,1]
+
+    pred = (scores > thres).astype(int)
+    metr_dict = binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+
+    pred = (scores > 0.5).astype(int)
+    def_metr_dict = binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+
+    return metr_dict[metric],def_metr_dict[metric]
+
+def formatMetr(metricValuesArr):
+
+    return "$"+str(round(metricValuesArr.mean(),2))+" \pm "+str(round(metricValuesArr.std(),2))+"$"
+
+def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric):
+
+    optiFunc = np.min if metric == "DED" else np.max
+    argOptiFunc = np.argmin if metric == "DED" else np.argmax
+
+    metr_list = np.zeros(len(thresList))
+
+    for i,thres in enumerate(thresList):
+
+        mean = 0
+        for j,path in enumerate(resFilePaths):
+
+            if videoNameDict[path] != videoToEvalName:
+
+                key = videoToEvalName+str(thres)+metric
+                if not key in metTun.keys():
+
+                    gt = load_data.getGT(dataset,videoNameDict[path]).astype(int)
+                    scores = np.genfromtxt(path)[:,1]
+                    pred = (scores > thres).astype(int)
+                    metrDict = binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+                    metTun[key] = metrDict[metric]
+
+                mean += metTun[key]
+
+        metr_list[i] = mean/(len(resFilePaths)-1)
+
+    return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
 
 def main(argv=None):
 
@@ -1058,14 +1225,23 @@ def main(argv=None):
     argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
     argreader.parser.add_argument('--conv_sco_plot',type=str,help='To plot the frequency response of the 1D filter learned by a model filtering its scores. The value is the path to the weight file.')
 
-    argreader.parser.add_argument('--plot_score',type=str,nargs=2,help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
-                                                                            The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments.\
-                                                                            The values of this arg are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
+    argreader.parser.add_argument('--plot_score',action="store_true",help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
+                                                                            The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments.')
+    argreader.parser.add_argument('--untrained_exp_and_model_id',default=[None,None],type=str,nargs=2,help='To plot the distance between features computed by the network before training when using the --plot_score arg.\
+                                                                                        The values are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
+    argreader.parser.add_argument('--plot_dist',action="store_true",help='To plot the distance when using the --plot_score argument')
 
-    argreader.parser.add_argument('--eval_model',type=float,nargs=4,help='To evaluate a model and plot the mean IoU as a function of the score threshold.\
+    argreader.parser.add_argument('--eval_model',type=float,nargs=4,help='To evaluate a model and plot the mean metrics as a function of the score threshold.\
                                     The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments. \
                                     The values of this args are the epochs at which to start and end the plot, followed by the minimum and maximum decision threshold \
                                     to evaluate.')
+
+    argreader.parser.add_argument('--eval_model_leave_one_out',type=float,nargs=3,help='To evaluate a model by tuning its decision threshold on the video on which it is not\
+                                    evaluated. The --model_id argument must be set, along with the --model_name, --exp_id and --dataset_test arguments. \
+                                    The values of this args are the epoch at which to evaluate , followed by the minimum and maximum decision threshold \
+                                    to evaluate.')
+
+    argreader.parser.add_argument('--model_name',type=str,metavar="NAME",help='The name of the model as will appear in the latex table produced by the --eval_model_leave_one_out argument.')
 
     argreader.parser.add_argument('--bbc_annot_dist',type=str,nargs=4,help='To comute the differential edit distance (DED) between annotators of the BBC dataset and one model. \
                                                                             It requires to have already evaluated the model on the bbc database.\
@@ -1076,9 +1252,10 @@ def main(argv=None):
                                                                             - the epoch at which the model has been evaluated.')
 
     argreader.parser.add_argument('--results_table',action="store_true",help='To write the metric value for several models. The arguments that must be set are \
-                                                                            --exp_id, --model_ids, --thres_list, --epoch_list and --dataset_test')
+                                                                            --exp_ids, --model_ids, --thres_list, --epoch_list and --dataset_test')
 
-    argreader.parser.add_argument('--model_ids',type=str,nargs="*",help='The list of model ids (useful for the --results_table argument')
+    argreader.parser.add_argument('--exp_id_list',type=str,nargs="*",help='The list of model experience ids (useful for the --results_table argument')
+    argreader.parser.add_argument('--model_id_list',type=str,nargs="*",help='The list of model ids (useful for the --results_table argument')
     argreader.parser.add_argument('--thres_list',type=float,nargs="*",help='The list of decision threshold (useful for the --results_table argument')
     argreader.parser.add_argument('--epoch_list',type=int,nargs="*",help='The list of epoch at which is model is evaluated (useful for the --results_table argument')
 
@@ -1099,17 +1276,22 @@ def main(argv=None):
     if args.conv_sco_plot:
         convScoPlot(args.conv_sco_plot)
     if args.plot_score:
-        plotScore(args.exp_id,args.model_id,args.plot_score[0],args.plot_score[1],args.dataset_test,args.test_part_beg,args.test_part_end)
+        plotScore(args.exp_id,args.model_id,args.untrained_exp_and_model_id[0],args.untrained_exp_and_model_id[1],args.dataset_test,args.test_part_beg,args.test_part_end,args.plot_dist)
     if args.eval_model:
         epochStart = int(args.eval_model[0])
         epochEnd = int(args.eval_model[1])
         thresMin = args.eval_model[2]
         thresMax = args.eval_model[3]
         evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd,thresMin,thresMax)
+    if args.eval_model_leave_one_out:
+        epoch = int(args.eval_model_leave_one_out[0])
+        thresMin = args.eval_model_leave_one_out[1]
+        thresMax = args.eval_model_leave_one_out[2]
+        evalModel_leaveOneOut(args.exp_id,args.model_id,args.model_name,args.dataset_test,epoch,thresMin,thresMax)
     if args.bbc_annot_dist:
         bbcAnnotDist(args.bbc_annot_dist[0],args.bbc_annot_dist[1],args.bbc_annot_dist[2],args.bbc_annot_dist[3])
     if args.results_table:
-        resultTables(args.exp_id,args.model_ids,args.thres_list,args.epoch_list,args.dataset_test)
+        resultTables(args.exp_id_list,args.model_id_list,args.thres_list,args.epoch_list,args.dataset_test)
 
 if __name__ == "__main__":
     main()
