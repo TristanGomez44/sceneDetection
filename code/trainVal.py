@@ -71,7 +71,7 @@ def addAdvTerm(loss,args,feat,featModel,discrModel,discrIter,discrOptim):
 
         discMeanAcc = ((pred.data > 0.5).float() == gt.data).float().mean()
 
-        dLoss = F.binary_cross_entropy(pred,gt)
+        dLoss = args.adv_weight*F.binary_cross_entropy(pred,gt)
         dLoss.backward(retain_graph=True)
         discrOptim.step()
 
@@ -657,7 +657,7 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
         if init_path != "None":
             params = torch.load(init_path)
 
-            state_dict = {k.replace("module.cnn.","cnn.module."): v for k,v in params.items()}
+            state_dict = {k.replace("module.cnn.","cnn.module.").replace("scoreConv.weight","scoreConv.layers.weight").replace("scoreConv.bias","scoreConv.layers.bias"): v for k,v in params.items()}
 
             net.load_state_dict(state_dict)
             startEpoch = findLastNumbers(init_path)
@@ -886,8 +886,9 @@ def main(argv=None):
 
     argreader.parser.add_argument('--comp_feat', action='store_true',help='To compute and write in a file the features of all images in the test set. All the arguments used to \
                                     build the model and the test data loader should be set.')
-    argreader.parser.add_argument('--no_train', action='store_true',help='To use to re-evaluate a model at each epoch after training. At each epoch, the model is not trained but \
-                                                                            the weights of the corresponding epoch are loaded and then the model is evaluated')
+    argreader.parser.add_argument('--no_train', type=str,nargs=2,help='To use to re-evaluate a model at each epoch after training. At each epoch, the model is not trained but \
+                                                                            the weights of the corresponding epoch are loaded and then the model is evaluated.\
+                                                                            The values of this argument are the exp_id and the model_id of the model to get the weights from.')
 
     argreader = addInitArgs(argreader)
     argreader = addLossArgs(argreader)
@@ -960,7 +961,8 @@ def main(argv=None):
         else:
             audioFeatModel = None
 
-        evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,testLoader,args.cuda,args.log_interval)
+        with torch.no_grad():
+            evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,testLoader,args.cuda,args.log_interval)
 
     else:
 
@@ -1054,17 +1056,20 @@ def main(argv=None):
                 kwargsTr["loader"],kwargsTr = updateHardMin(epoch,args.epochs_hm,hmDict,trainDataset,args,kwargsTr,kwargsTr["loader"])
 
             else:
-                net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id,epoch)))
+                net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.no_train[0],args.no_train[1],epoch)))
 
             kwargsVal["metricLastVal"] = metricLastVal
             kwargsVal["width"] = width
 
-            with torch.no_grad():
-                metricLastVal,outDict,targDict = valFunc(**kwargsVal)
-
-            outDictEpochs[epoch] = outDict
-            targDictEpochs[epoch] = targDict
-            updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
+            #Checking if validation has already been done
+            if len(glob.glob("../results/{}/{}_epoch{}_*".format(args.exp_id,args.model_id,epoch))) < len(kwargsVal["loader"].videoPaths):
+                with torch.no_grad():
+                    metricLastVal,outDict,targDict = valFunc(**kwargsVal)
+                outDictEpochs[epoch] = outDict
+                targDictEpochs[epoch] = targDict
+                updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
+            else:
+                print("Validation epoch {} already done !".format(epoch))
 
 if __name__ == "__main__":
     main()
