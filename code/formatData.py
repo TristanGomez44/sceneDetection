@@ -43,6 +43,9 @@ def main(argv=None):
     argreader.parser.add_argument('--format_ally_mcbeal',type=str,metavar="EXT",help='Format the Ally McBeal dataset. \
                                             The value is the extension of the video file. E.g : \"--format_ally_mcbeal avi\".')
 
+    argreader.parser.add_argument('--format_rai',type=str,metavar="EXT",help='Format the RAI dataset. \
+                                            The value is the extension of the video file. E.g : \"--format_rai mp4\".')
+
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -192,6 +195,7 @@ def main(argv=None):
                 clips = sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos)))
                 clips = list(filter(lambda x: x.find("_cut.") ==-1,clips))
 
+                totalFrameNb = 0
                 for k,videoPath in enumerate(clips):
                     print("\t",videoPath)
 
@@ -200,21 +204,20 @@ def main(argv=None):
                     accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
 
                     #Getting the number of frames of the video
-                    subprocess.call("ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 {} > nbFrames.txt".format(videoPath),shell=True)
-
-                    nbFrames = np.genfromtxt("nbFrames.txt")
-
+                    nbFrames = getNbFrames(videoPath)
                     fps = processResults.getVideoFPS(videoPath)
 
                     if args.dataset == "youtube_large":
                         stopFrame = nbFrames-32*fps
+                    elif args.dataset == "bbcEarth":
+                        stopFrame = nbFrames-20*fps
                     else:
                         stopFrame = nbFrames
 
-                    gt.append([startFr+1,stopFrame])
-                    startFr = stopFrame
+                    gt.append([totalFrameNb,totalFrameNb+stopFrame])
+                    totalFrameNb += stopFrame+1
 
-                    if args.dataset == "youtube_large":
+                    if args.dataset == "youtube_large" or args.dataset == "bbcEarth":
                         #Remove the end landmark with ffpmeg
                         subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
                         fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
@@ -227,7 +230,7 @@ def main(argv=None):
                 #Concatenate the videos
                 subprocess.call("ffmpeg -v error -safe 0 -f concat -i {} -c copy -an {}".format(videoFoldPath+"/fileToCat.txt",accVidPath.replace("_tmp","")),shell=True)
 
-                if args.dataset == "youtube_large":
+                if args.dataset == "youtube_large" or args.dataset == "bbcEarth":
                     #Removing cut file created by ffmpeg
                     for cutClipPath in sorted(glob.glob(videoFoldPath+"/*cut.{}".format(args.merge_videos))):
                         os.remove(cutClipPath)
@@ -240,15 +243,20 @@ def main(argv=None):
 
                 vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
 
+                gt = np.array(gt).astype(int)
+                gt[-1,1] = getNbFrames(accVidPath.replace("_tmp",""))-1
                 np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName),gt)
 
                 os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
+
+            nbFrames = getNbFrames(accVidPath.replace("_tmp",""))
+            fps = processResults.getVideoFPS(accVidPath.replace("_tmp",""))
 
             #Detecting shots
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
 
-                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.shot_thres)
+                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.shot_thres,nbFrames,fps)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
             #Remove the temporary wav files:
@@ -256,7 +264,7 @@ def main(argv=None):
                 os.remove(wavFilePath)
 
             #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
-            resPath = "../data/youtube_large/{}/result.xml".format(vidName)
+            resPath = "../data/{}/{}/result.xml".format(args.dataset,vidName)
             res = processResults.xmlToArray(resPath)
 
             if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
@@ -356,7 +364,7 @@ def main(argv=None):
                 shutil.copyfile(path,newPath)
 
             fps = processResults.getVideoFPS(path)
-            frameNb = int(float(pims.Video(path)._duration)*fps)-1
+            frameNb = round(float(pims.Video(path)._duration)*fps)
 
             #Extract shots
             if not os.path.exists("../data/bbc2/{}/result.csv".format(vidName)):
@@ -394,7 +402,7 @@ def main(argv=None):
             vidName = os.path.basename(os.path.splitext(path)[0])
 
             fps = processResults.getVideoFPS(path)
-            frameNb = int(float(pims.Video(path)._duration)*fps)-1
+            frameNb = round(float(pims.Video(path)._duration)*fps)
 
             #Removing holes in scenes segmentation
             rawSceneCSV = np.genfromtxt(rawSceneFilePaths[i])
@@ -442,6 +450,44 @@ def main(argv=None):
             #Extract scenes
             tripletToInterv(rawAnnotationFilePaths[i],"scenes",fps,frameNb,"../data/allymcbeal/annotations/{}_scenes.txt".format(i))
 
+    if args.format_rai:
+        videoPaths = sorted(glob.glob("../data/RAIDataset/*.{}".format(args.format_rai)))
+        rawAnnotationFilePaths = sorted(glob.glob("../data/RAIDataset/annotations/*txt"))
+
+        if not os.path.exists("../data/rai/annotations"):
+            os.makedirs("../data/rai/annotations")
+
+        for i,videoPath in enumerate(videoPaths):
+            print(videoPath,rawAnnotationFilePaths[i])
+
+            vidName = i
+            newVideoPath = "../data/rai/{}.{}".format(vidName,args.format_rai)
+            videoFold = os.path.splitext(newVideoPath)[0]
+
+            #Copy video
+            if not os.path.exists(newVideoPath):
+                shutil.copyfile(videoPath,newVideoPath)
+
+            if not os.path.exists(videoFold):
+                os.makedirs(videoFold)
+
+            fps = processResults.getVideoFPS(newVideoPath)
+            frameNb = round(float(pims.Video(newVideoPath)._duration)*fps)
+
+            #Extract shots
+            if not os.path.exists("../data/rai/{}/result.csv".format(vidName)):
+                shotBoundsFrame = detect_format_shots(newVideoPath,args.shot_thres,frameNb,fps)
+                np.savetxt("../data/rai/{}/result.csv".format(vidName),shotBoundsFrame)
+            else:
+                shotBoundsFrame = np.genfromtxt("../data/rai/{}/result.csv".format(vidName))
+                if shotBoundsFrame[-1,1] != frameNb-1:
+                    shotBoundsFrame[-1,1] = frameNb-1
+                    np.savetxt("../data/rai/{}/result.csv".format(vidName),shotBoundsFrame)
+
+            scenes = np.genfromtxt("../data/RAIDataset/annotations/scenes_{}.txt".format(vidName+1))
+            scenes[-1,1] = frameNb
+
+            np.savetxt("../data/rai/annotations/{}_scenes.txt".format(vidName),scenes-1)
 
 def tripletToInterv(h5FilePath,segKey,fps,frameNb,savePath):
     """ Convert from the format found in the h5py files (i.e. the Ally McBeal annotations \
@@ -492,11 +538,13 @@ def detect_format_shots(path,shot_thres,frameNb,fps):
     #Detecting shots
     shotBoundsTime = shotdetect.extract_shots_with_ffprobe(path,threshold=shot_thres)
 
+    np.savetxt(path.replace(".mp4","_tempShotSeg.csv"),np.array(shotBoundsTime))
+
     #Shot boundaries as a function of frame index instead of time
     shotBoundsFrame = (np.array(shotBoundsTime)*fps).astype(int)
 
     starts = np.concatenate(([0],shotBoundsFrame),axis=0)
-    ends = np.concatenate((shotBoundsFrame-1,[frameNb]),axis=0)
+    ends = np.concatenate((shotBoundsFrame-1,[frameNb-1]),axis=0)
     shotBoundsFrame = np.concatenate((starts[:,np.newaxis],ends[:,np.newaxis]),axis=1)
 
     return shotBoundsFrame
