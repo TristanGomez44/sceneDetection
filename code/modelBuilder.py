@@ -7,7 +7,6 @@ import densenet
 import vggish
 
 import args
-import processResults
 
 def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
     ''' Build a visual feature model
@@ -408,11 +407,6 @@ class SceneDet(nn.Module):
             params.append(p)
 
         return (p for p in params)
-
-def findNumbers(x):
-    '''Extracts the numbers of a string and returns them as an integer'''
-
-    return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
 def netBuilder(args):
 
