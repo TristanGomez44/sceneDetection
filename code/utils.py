@@ -1,7 +1,7 @@
 import pims
 import numpy as np
 import xml.etree.ElementTree as ET
-import os 
+import os
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
                 into a list of intervals i.e. a scene boundary array relative to shot index
@@ -132,3 +132,8 @@ def getVideoFPS(videoPath):
     ''' Get the number of frame per sencond of a video.'''
 
     return float(pims.Video(videoPath)._frame_rate)
+
+def findNumbers(x):
+    '''Extracts the numbers of a string and returns them as an integer'''
+
+    return int((''.join(xi for xi in str(x) if xi.isdigit())))
