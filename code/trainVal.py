@@ -24,6 +24,7 @@ plt.switch_backend('agg')
 
 import modelBuilder
 import load_data
+import metrics
 import processResults
 
 def addSparsTerm(loss,args,output):
@@ -211,7 +212,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
 
             #Metrics
             pred = output.data > 0.5
-            cov,overflow,iou = processResults.binaryToMetrics(pred,target)
+            cov,overflow,iou = metrics.binaryToMetrics(pred,target)
 
             metrDict["Coverage"] += cov
             metrDict["Overflow"] += overflow
@@ -220,7 +221,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
             metrDict["Disc Accuracy"] += discMeanAcc
             metrDict["Dist Pos"] += distPos
             metrDict["Dist Neg"] += distNeg
-            metrDict["DED"] += processResults.computeDED(output.data>0.5,target.long())
+            metrDict["DED"] += metrics.computeDED(output.data>0.5,target.long())
 
             #Store the f score of each example
             updateHMDict(hmDict,cov,overflow,vidNames)
@@ -388,13 +389,13 @@ def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metr
     outDict[precVidName] = allOutput
     targDict[precVidName] = allTarget
 
-    cov,overflow,iou = processResults.binaryToMetrics(allOutput>0.5,allTarget)
+    cov,overflow,iou = metrics.binaryToMetrics(allOutput>0.5,allTarget)
     metrDict["Coverage"] += cov
     metrDict["Overflow"] += overflow
     metrDict["True F-score"] += 2*cov*(1-overflow)/(cov+1-overflow)
     metrDict["IoU"] += iou
     metrDict["AuC"] += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
-    metrDict['DED'] += processResults.computeDED(allOutput.data>0.5,allTarget.long())
+    metrDict['DED'] += metrics.computeDED(allOutput.data>0.5,allTarget.long())
 
     nbVideos += 1
 
