@@ -180,17 +180,13 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
 
             #Computing predictions
             if args.temp_model.find("net") != -1:
-                if args.pool_temp_mod == "lstm" or args.pool_temp_mod == "cnn":
-                    output = model(data,audio,None,None,target)
-                else:
-                    output = model(data,audio)
+                output = model(data,audio)
             else:
                 output,_ = model(data,audio)
 
             #Computing loss
-            if args.pool_temp_mod == 'lstm' or args.pool_temp_mod=="cnn":
-                loss = -processResults.continuousIoU(output, target)
-            elif args.soft_loss:
+
+            if args.soft_loss:
                 output = output[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
                 target = target[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
 
@@ -212,9 +208,6 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
             loss.backward()
             optim.step()
             optim.zero_grad()
-
-            if args.pool_temp_mod == "lstm" or args.pool_temp_mod=="cnn":
-                output = processResults.scenePropToBinary(output,data.size(1))
 
             #Metrics
             pred = output.data > 0.5
@@ -380,9 +373,7 @@ def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metr
     if args.temp_model.find("net") != -1:
         allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
 
-    if args.pool_temp_mod == 'lstm' or args.pool_temp_mod == 'cnn'  :
-        loss = -processResults.continuousIoU(allOutput, allTarget)
-    elif args.soft_loss:
+    if args.soft_loss:
         softAllTarget = softTarget(allOutput,allTarget,width)
         loss = F.binary_cross_entropy(allOutput,softAllTarget).data.item()
     else:
@@ -393,9 +384,6 @@ def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metr
         loss += args.sparsi_weig*sparsiRew(allOutput.data,args.sparsi_wind,args.sparsi_thres)
 
     metrDict["Loss"] += loss
-
-    if args.pool_temp_mod=="lstm" or args.pool_temp_mod=="cnn":
-        allOutput = processResults.scenePropToBinary(allOutput,allTarget.size(1))
 
     outDict[precVidName] = allOutput
     targDict[precVidName] = allTarget
@@ -517,20 +505,9 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
 
     sumSize = 0
 
-    if poolTempMod == "lstm" or poolTempMod=="cnn":
-        attList = []
-    else:
-        attList = None
-
     for i in range(len(chunkList)):
 
-        if poolTempMod == "lstm" or poolTempMod=="cnn":
-            targets = allTarget[:,sumSize:sumSize+chunkList[i].size(1)]
-            output = model.computeScore(chunkList[i],None,None,targets)[0].unsqueeze(0).data[:,overlap:chunkList[i].size(1)-overlap]
-
-            #print(output.size(),len(attList))
-        else:
-            output = model.computeScore(chunkList[i]).data[:,overlap:chunkList[i].size(1)-overlap]
+        output = model.computeScore(chunkList[i]).data[:,overlap:chunkList[i].size(1)-overlap]
 
         if allOutput is None:
             allOutput = output
