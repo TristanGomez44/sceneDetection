@@ -14,7 +14,7 @@ import shotdetect
 import pims
 import h5py
 import cv2
-
+import utils
 import processResults
 
 def main(argv=None):
@@ -199,7 +199,7 @@ def main(argv=None):
 
                     #Getting the number of frames of the video
                     nbFrames = getNbFrames(videoPath)
-                    fps = processResults.getVideoFPS(videoPath)
+                    fps = utils.getVideoFPS(videoPath)
 
                     if args.dataset == "youtube_large":
                         stopFrame = nbFrames-32*fps
@@ -244,7 +244,7 @@ def main(argv=None):
                 os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
 
             nbFrames = getNbFrames(accVidPath.replace("_tmp",""))
-            fps = processResults.getVideoFPS(accVidPath.replace("_tmp",""))
+            fps = utils.getVideoFPS(accVidPath.replace("_tmp",""))
 
             #Detecting shots
             vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
@@ -259,7 +259,7 @@ def main(argv=None):
 
             #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
             resPath = "../data/{}/{}/result.xml".format(args.dataset,vidName)
-            res = processResults.xmlToArray(resPath)
+            res = utils.xmlToArray(resPath)
 
             if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
 
@@ -357,7 +357,7 @@ def main(argv=None):
             if not os.path.exists(newPath):
                 shutil.copyfile(path,newPath)
 
-            fps = processResults.getVideoFPS(path)
+            fps = utils.getVideoFPS(path)
             frameNb = round(float(pims.Video(path)._duration)*fps)
 
             #Extract shots
@@ -395,7 +395,7 @@ def main(argv=None):
 
             vidName = os.path.basename(os.path.splitext(path)[0])
 
-            fps = processResults.getVideoFPS(path)
+            fps = utils.getVideoFPS(path)
             frameNb = round(float(pims.Video(path)._duration)*fps)
 
             #Removing holes in scenes segmentation
@@ -436,7 +436,7 @@ def main(argv=None):
             if not os.path.exists(videoFold):
                 os.makedirs(videoFold)
 
-            fps = processResults.getVideoFPS(newVideoPath)
+            fps = utils.getVideoFPS(newVideoPath)
             frameNb = round(float(pims.Video(newVideoPath)._duration)*fps)
 
             #Extract shots
@@ -465,7 +465,7 @@ def main(argv=None):
             if not os.path.exists(videoFold):
                 os.makedirs(videoFold)
 
-            fps = processResults.getVideoFPS(newVideoPath)
+            fps = utils.getVideoFPS(newVideoPath)
             frameNb = round(float(pims.Video(newVideoPath)._duration)*fps)
 
             #Extract shots

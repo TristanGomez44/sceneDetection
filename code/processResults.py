@@ -11,8 +11,6 @@ from skimage.transform import resize
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
-import xml.etree.ElementTree as ET
-
 from sklearn.manifold import TSNE
 import matplotlib.cm as cm
 import pims
@@ -23,6 +21,7 @@ import load_data
 import modelBuilder
 
 import metrics
+import utils
 
 def resultTables(exp_ids,modelIds,thresList,epochList,dataset):
 
@@ -63,6 +62,95 @@ def resultTables(exp_ids,modelIds,thresList,epochList,dataset):
 
     with open("../results/{}_metrics.csv".format(dataset),"w") as text_file:
         print(csvMeans,file=text_file)
+
+def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres):
+
+    resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,epoch)),key=modelBuilder.findNumbers))
+    videoNameDict = buildVideoNameDict(dataset_test,0,1,resFilePaths)
+    resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
+
+    thresList = np.arange(firstThres,lastThres,step=(lastThres-firstThres)/10)
+
+    #Store the value of the f-score of for video and for each threshold
+    metTun = {}
+    metEval = {"IoU":    np.zeros(len(resFilePaths)),\
+               "F-score":np.zeros(len(resFilePaths)),\
+               "DED":    np.zeros(len(resFilePaths))}
+
+    metDef = {"IoU":    np.zeros(len(resFilePaths)),\
+              "F-score":np.zeros(len(resFilePaths)),\
+              "DED":    np.zeros(len(resFilePaths))}
+
+    for j,path in enumerate(resFilePaths):
+
+        fileName = os.path.basename(os.path.splitext(path)[0])
+        videoName = videoNameDict[path]
+
+        metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score")
+        metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU")
+        metEval["DED"][j],metDef["DED"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED")
+
+    printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
+
+    with open("../results/{}_metrics.csv".format(dataset_test),"a") as text_file:
+        if printHeader:
+            print("Model,Threshold tuning,F-score,IoU,DED",file=text_file)
+
+        print("\multirow{2}{*}{"+model_name+"}"+"&"+"Yes"+"&"+formatMetr(metEval["F-score"])+"&"+formatMetr(metEval["IoU"])+"&"+formatMetr(metEval["DED"])+"\\\\",file=text_file)
+        print("&"+"No"+"&"+formatMetr(metDef["F-score"])+"&"+formatMetr(metDef["IoU"])+"&"+formatMetr(metDef["DED"])+"\\\\",file=text_file)
+        print("\hline",file=text_file)
+
+    print("Best F-score : ",str(round(metEval["F-score"].mean(),2)),"Default F-score :",str(round(metDef["F-score"].mean(),2)),\
+          "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
+
+def findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric):
+    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric)
+
+    gt = load_data.getGT(dataset_test,videoName).astype(int)
+    scores = np.genfromtxt(path)[:,1]
+
+    pred = (scores > thres).astype(int)
+    metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+
+    pred = (scores > 0.5).astype(int)
+    def_metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+
+    return metr_dict[metric],def_metr_dict[metric]
+
+def formatMetr(metricValuesArr):
+
+    return "$"+str(round(metricValuesArr.mean(),2))+" \pm "+str(round(metricValuesArr.std(),2))+"$"
+
+def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric):
+
+    optiFunc = np.min if metric == "DED" else np.max
+    argOptiFunc = np.argmin if metric == "DED" else np.argmax
+
+    metr_list = np.zeros(len(thresList))
+
+    for i,thres in enumerate(thresList):
+
+        mean = 0
+        for j,path in enumerate(resFilePaths):
+
+            if videoNameDict[path] != videoToEvalName:
+
+                key = videoToEvalName+str(thres)+metric
+                if not key in metTun.keys():
+
+                    gt = load_data.getGT(dataset,videoNameDict[path]).astype(int)
+                    scores = np.genfromtxt(path)[:,1]
+                    pred = (scores > thres).astype(int)
+                    metrDict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
+                    metTun[key] = metrDict[metric]
+
+                mean += metTun[key]
+
+        metr_list[i] = mean/(len(resFilePaths)-1)
+
+    return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
+
+
 
 def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     '''
@@ -127,112 +215,6 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
         else:
             print("\tFeature for video {} does not exist".format(videoName))
 
-def binaryToSceneBounds(scenesBinary):
-    ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
-                into a list of intervals i.e. a scene boundary array relative to shot index
-    Args:
-    - scenesBinary (list): a list indicating for each shot if it is the begining of a new scene or not. A 1 indicates that \
-                    the shot is the first shot of a new scene. A 0 indicates otherwise.
-
-    '''
-
-    sceneBounds = []
-    currSceneStart=0
-
-    for i in range(len(scenesBinary)):
-
-        if scenesBinary[i]:
-            sceneBounds.append([currSceneStart,i-1])
-            currSceneStart = i
-
-    sceneBounds.append([currSceneStart,len(scenesBinary)-1])
-
-    return sceneBounds
-
-def scenePropToBinary(sceneProps,shotNb):
-    ''' Convert a list of scene length into the binary format '''
-
-    if type(shotNb) is int:
-        shotNb = [shotNb for _ in range(len(sceneProps))]
-
-    #Looping over batches
-    binary = torch.zeros((len(sceneProps),shotNb[0])).to(sceneProps[0].device)
-
-    for i in range(len(sceneProps)):
-
-        sceneStarts = torch.cumsum(sceneProps[i]*shotNb[i],dim=0).long()
-
-        sceneStarts = sceneStarts[sceneStarts < shotNb[i]]
-
-        binary[i][sceneStarts] = 1
-
-    return binary
-
-def frame_to_shots(dataset,pathToXml,scenesF):
-    ''' Computes scene boundaries relative with shot index instead of frame index '''
-
-    shotsF = xmlToArray(pathToXml)
-
-    #Computing scene boundaries with shot number instead of frame
-    scenesS = []
-
-    shotInd = 0
-    sceneInd = 0
-
-    currShotStart = 0
-
-    while shotInd<len(shotsF) and sceneInd<len(scenesF):
-
-        if shotsF[shotInd,0] <= scenesF[sceneInd,1] and scenesF[sceneInd,1] <= shotsF[shotInd,1]:
-
-            #This condition is added just to prevent a non-sense line to be written at the end
-            if currShotStart<=shotInd:
-                scenesS.append([currShotStart,shotInd])
-
-            currShotStart = shotInd+1
-
-            sceneInd += 1
-        else:
-            shotInd+=1
-
-    return scenesS
-
-def shots_to_frames(pathToXml,scenesS):
-    ''' Computes scene boundaries file with frame index instead of shot index '''
-
-    shotsF = xmlToArray(pathToXml)
-
-    scenes_startF = shotsF[:,0][scenesS[:,0].astype(int)]
-    scenes_endF = shotsF[:,1][scenesS[:,1].astype(int)]
-
-    scenesF = np.concatenate((scenes_startF[:,np.newaxis],scenes_endF[:,np.newaxis]),axis=1)
-
-    return scenesF
-
-def xmlToArray(xmlPath):
-    ''' Read the shot segmentation for a video
-
-    If the shot segmentation does not exist in .xml at the path indicated, \
-    this function look for the segmentation in csv file, in the same folder.
-
-     '''
-
-    if os.path.exists(xmlPath):
-        #Getting the shot bounds with frame number
-        tree = ET.parse(xmlPath).getroot()
-        shotsF = tree.find("content").find("body").find("shots")
-        frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
-
-        shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
-        shotsF.append(frameNb)
-
-        shotsF = np.array(shotsF)
-        shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
-
-        return shotsF
-    else:
-        return np.genfromtxt(xmlPath.replace(".xml",".csv"))
-
 def bbcAnnotDist(annotFold,modelExpId,modelId,modelEpoch):
 
     #The number and names of episodes
@@ -257,8 +239,8 @@ def bbcAnnotDist(annotFold,modelExpId,modelId,modelEpoch):
                 segmJ,segmK = readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb)
                 distMat["DED"][i,j,k] = metrics.computeDED(torch.tensor(segmJ).unsqueeze(0),torch.tensor(segmK).unsqueeze(0))
 
-                segmJ = binaryToSceneBounds(ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb))
-                segmK = binaryToSceneBounds(ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb))
+                segmJ = utils.binaryToSceneBounds(utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb))
+                segmK = utils.binaryToSceneBounds(utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb))
 
                 over = metrics.overflow(np.array(segmJ),np.array(segmK))
                 cover = metrics.coverage(np.array(segmJ),np.array(segmK))
@@ -276,23 +258,16 @@ def bbcAnnotDist(annotFold,modelExpId,modelId,modelEpoch):
 def readBothSeg(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,k,annotNb,shotNb):
 
     if j==annotNb:
-        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
-        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb,segmK.sum())
+        segmK = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
+        segmJ = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb,segmK.sum())
     elif k==annotNb:
-        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
-        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb,segmJ.sum())
+        segmJ = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
+        segmK = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb,segmJ.sum())
     else:
-        segmJ = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
-        segmK = ToBinary(getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
+        segmJ = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,j,annotNb),shotNb)
+        segmK = utils.toBinary(utils.getPath(annotFold,modelExpId,modelId,modelEpoch,i,epiNames,k,annotNb),shotNb)
 
     return segmJ,segmK
-
-def getPath(annotFold,modelExpId,modelId,modelEpoch,epiInd,epiNames,annotationInd,annotatorNb):
-
-    if annotationInd < annotatorNb:
-        return annotFold+"/scenes/annotator_{}/{}.txt".format(annotationInd,epiNames[epiInd])
-    else:
-        return "../results/{}/{}_epoch{}_{}.csv".format(modelExpId,modelId,modelEpoch,epiInd)
 
 def plotHeatMapWithValues(mat,path):
     # Limits for the extent
@@ -326,38 +301,6 @@ def plotHeatMapWithValues(mat,path):
     fig.colorbar(im)
     fig.savefig(path)
     plt.close()
-
-def ToBinary(segmPath,shotNb,targetNbScene=None):
-    ''' Read and convert a scene segmentation from the format given in the BBC dataset (list of starts on one line)
-    into the binary format (list of 0 and 1, with one where the scene is changing).
-
-    It also read segmentation in the model format, which is the format produced after the eval function of trainVal.py
-
-    '''
-    segm = np.genfromtxt(segmPath)
-
-    if np.isnan(segm).any():
-        segm = np.genfromtxt(segmPath,delimiter=",")[:-1]
-        binary = np.zeros(shotNb)
-        binary[segm.astype(int)] = 1
-        binary[0] = 0
-        return binary.astype(int)
-    else:
-        if not targetNbScene is None:
-            #Finding the threshold to get a number of scene as close as possible from the desired number
-            thres = 1
-            nbScene = 0
-            while nbScene <  targetNbScene:
-                thres -= 0.05
-                precNbScene = nbScene
-                nbScene = (segm[:,1]>thres).sum()
-
-            if np.abs(precNbScene-targetNbScene)<np.abs(nbScene-targetNbScene):
-                thres += 0.05
-        else:
-            thres = 0.5
-
-        return (segm[:,1]>thres).astype(int)
 
 def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     ''' Plot the scene change score on the image of a video
@@ -396,7 +339,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
 
     videoPath = list(filter(lambda x:x.find("wav")==-1,glob.glob("../data/"+dataset+"/"+videoName+"*.*")))[0]
     print(videoPath)
-    shotFrames = xmlToArray("../data/{}/{}/result.xml".format(dataset))
+    shotFrames = utils.xmlToArray("../data/{}/{}/result.xml".format(dataset))
 
     cap = cv2.VideoCapture(videoPath)
     print(cap)
@@ -410,7 +353,7 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
     success=True
     imgWidth,imgHeigth = None,None
 
-    fps = getVideoFPS(videoPath)
+    fps = utils.getVideoFPS(videoPath)
     print("Fps",fps)
     videoRes = None
     while success:
@@ -479,11 +422,6 @@ def scoreVis_video(dataset,exp_id,resFilePath,nbScoToPlot=11):
             success = False
 
     videoRes.release()
-
-def getVideoFPS(videoPath):
-    ''' Get the number of frame per sencond of a video.'''
-
-    return float(pims.Video(videoPath)._frame_rate)
 
 def convScoPlot(weightFile):
 
@@ -815,93 +753,6 @@ def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoc
     bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
 
     print("Best F-scores : ",fscoArr[bestThresInd],"epoch",bestEpochInd+firstEpoch,"threshold",round(thresList[bestThresInd],2))
-
-def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres):
-
-    resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,epoch)),key=modelBuilder.findNumbers))
-    videoNameDict = buildVideoNameDict(dataset_test,0,1,resFilePaths)
-    resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
-
-    thresList = np.arange(firstThres,lastThres,step=(lastThres-firstThres)/10)
-
-    #Store the value of the f-score of for video and for each threshold
-    metTun = {}
-    metEval = {"IoU":    np.zeros(len(resFilePaths)),\
-               "F-score":np.zeros(len(resFilePaths)),\
-               "DED":    np.zeros(len(resFilePaths))}
-
-    metDef = {"IoU":    np.zeros(len(resFilePaths)),\
-              "F-score":np.zeros(len(resFilePaths)),\
-              "DED":    np.zeros(len(resFilePaths))}
-
-    for j,path in enumerate(resFilePaths):
-
-        fileName = os.path.basename(os.path.splitext(path)[0])
-        videoName = videoNameDict[path]
-
-        metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score")
-        metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU")
-        metEval["DED"][j],metDef["DED"][j] = findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED")
-
-    printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
-
-    with open("../results/{}_metrics.csv".format(dataset_test),"a") as text_file:
-        if printHeader:
-            print("Model,Threshold tuning,F-score,IoU,DED",file=text_file)
-
-        print("\multirow{2}{*}{"+model_name+"}"+"&"+"Yes"+"&"+formatMetr(metEval["F-score"])+"&"+formatMetr(metEval["IoU"])+"&"+formatMetr(metEval["DED"])+"\\\\",file=text_file)
-        print("&"+"No"+"&"+formatMetr(metDef["F-score"])+"&"+formatMetr(metDef["IoU"])+"&"+formatMetr(metDef["DED"])+"\\\\",file=text_file)
-        print("\hline",file=text_file)
-
-    print("Best F-score : ",str(round(metEval["F-score"].mean(),2)),"Default F-score :",str(round(metDef["F-score"].mean(),2)),\
-          "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
-
-def findBestThres_computeFsco(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric):
-    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric)
-
-    gt = load_data.getGT(dataset_test,videoName).astype(int)
-    scores = np.genfromtxt(path)[:,1]
-
-    pred = (scores > thres).astype(int)
-    metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
-
-    pred = (scores > 0.5).astype(int)
-    def_metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
-
-    return metr_dict[metric],def_metr_dict[metric]
-
-def formatMetr(metricValuesArr):
-
-    return "$"+str(round(metricValuesArr.mean(),2))+" \pm "+str(round(metricValuesArr.std(),2))+"$"
-
-def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric):
-
-    optiFunc = np.min if metric == "DED" else np.max
-    argOptiFunc = np.argmin if metric == "DED" else np.argmax
-
-    metr_list = np.zeros(len(thresList))
-
-    for i,thres in enumerate(thresList):
-
-        mean = 0
-        for j,path in enumerate(resFilePaths):
-
-            if videoNameDict[path] != videoToEvalName:
-
-                key = videoToEvalName+str(thres)+metric
-                if not key in metTun.keys():
-
-                    gt = load_data.getGT(dataset,videoNameDict[path]).astype(int)
-                    scores = np.genfromtxt(path)[:,1]
-                    pred = (scores > thres).astype(int)
-                    metrDict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
-                    metTun[key] = metrDict[metric]
-
-                mean += metTun[key]
-
-        metr_list[i] = mean/(len(resFilePaths)-1)
-
-    return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
 
 def main(argv=None):
 
