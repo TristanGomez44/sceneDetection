@@ -1,4 +1,4 @@
-import processResults
+import utils
 import numpy as np
 import torch
 import scipy as sp
@@ -18,8 +18,8 @@ def binaryToMetrics(pred,target):
 
     for i in range(len(pred)):
 
-        pred_bounds = processResults.binaryToSceneBounds(pred[i])
-        targ_bounds = processResults.binaryToSceneBounds(target[i])
+        pred_bounds = utils.binaryToSceneBounds(pred[i])
+        targ_bounds = utils.binaryToSceneBounds(target[i])
 
         if len(targ_bounds) > 1:
             predBounds.append(pred_bounds)
@@ -56,8 +56,8 @@ def binaryToAllMetrics(predBin,targetBin):
 
     for i in range(len(predBin)):
 
-        pred_bounds = processResults.binaryToSceneBounds(predBin[i])
-        targ_bounds = processResults.binaryToSceneBounds(targetBin[i])
+        pred_bounds = utils.binaryToSceneBounds(predBin[i])
+        targ_bounds = utils.binaryToSceneBounds(targetBin[i])
 
         if len(targ_bounds) > 1:
             predBounds.append(pred_bounds)

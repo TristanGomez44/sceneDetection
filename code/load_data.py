@@ -1,5 +1,6 @@
 import sys
 import glob
+import os
 
 import numpy as np
 import torch
@@ -17,6 +18,8 @@ import time
 import args
 import warnings
 warnings.filterwarnings('ignore',module=".*av.*")
+
+import utils
 
 class Sampler(torch.utils.data.sampler.Sampler):
     """ The sampler for the SeqTrDataset dataset
@@ -127,7 +130,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         else:
             for videoPath in self.videoPaths:
                 videoFold = os.path.splitext(videoPath)[0]
-                self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+                self.nbShots += len(utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -149,11 +152,11 @@ class SeqTrDataset(torch.utils.data.Dataset):
         vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
 
         if not self.videoPaths[vidInd] in self.FPSDict.keys():
-            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd])
+            self.FPSDict[self.videoPaths[vidInd]] = utils.getVideoFPS(self.videoPaths[vidInd])
 
-        fps = processResults.getVideoFPS(self.videoPaths[vidInd])
+        fps = utils.getVideoFPS(self.videoPaths[vidInd])
 
-        shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
+        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds = np.arange(len(shotBounds))
 
         #Computes the scene number of each shot
@@ -213,7 +216,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,))
 
         #Clamp the maximal value to the last frame index
-        lastFrameInd = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max()
+        lastFrameInd = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max()
         frameInds = torch.clamp(frameInds,0,lastFrameInd).long()
         frameInds = frameInds.transpose(dim0=0,dim1=1)
         frameInds = frameInds.contiguous().view(-1)
@@ -229,7 +232,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
-            print(vidName,frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max(),gt.max())
+            print(vidName,frameInds.max(),utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max(),gt.max())
             sys.exit(0)
 
         if self.audioLen > 0:
@@ -269,7 +272,7 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         else:
             for videoPath in self.videoPaths:
                 videoFold = os.path.splitext(videoPath)[0]
-                self.nbShots += len(processResults.xmlToArray("{}/result.xml".format(videoFold)))
+                self.nbShots += len(utils.xmlToArray("{}/result.xml".format(videoFold)))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -287,11 +290,11 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         vidName = os.path.basename(vidFold)
 
         if not self.videoPaths[vidInd] in self.FPSDict.keys():
-            self.FPSDict[self.videoPaths[vidInd]] = processResults.getVideoFPS(self.videoPaths[vidInd])
+            self.FPSDict[self.videoPaths[vidInd]] = utils.getVideoFPS(self.videoPaths[vidInd])
 
         fps = self.FPSDict[self.videoPaths[vidInd]]
 
-        shotBounds = processResults.xmlToArray("{}/result.xml".format(vidFold))
+        shotBounds = utils.xmlToArray("{}/result.xml".format(vidFold))
         shotInd = np.random.randint(len(shotBounds))
 
         #Selecting frame indexes
@@ -342,7 +345,7 @@ class TestLoader():
         self.nbShots =0
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
-            self.nbShots += len(processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+            self.nbShots += len(utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
 
     def __iter__(self):
         self.videoInd = 0
@@ -363,9 +366,9 @@ class TestLoader():
 
         vidName = os.path.basename(os.path.splitext(videoPath)[0])
 
-        fps = processResults.getVideoFPS(videoPath)
+        fps = utils.getVideoFPS(videoPath)
 
-        shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
+        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
 
         if not self.randomFrame:
@@ -382,7 +385,7 @@ class TestLoader():
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
-            print(vidName,"max frame",frameInds.max(),processResults.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
+            print(vidName,"max frame",frameInds.max(),utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
             sys.exit(0)
 
         if self.audioLen > 0:
@@ -435,16 +438,10 @@ def buildFrameTrainLoader(args):
 
 def findVideos(dataset,propStart,propEnd):
 
-    print(glob.glob("../data//*".format(dataset)))
-    print("../data/{}/*.*".format(dataset))
     videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
-    print(videoPaths)
     videoPaths = list(filter(lambda x:x.find(".wav") == -1,videoPaths))
-    print(videoPaths)
     videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
-    print(videoPaths)
     videoPaths = np.array(videoPaths)[int(propStart*len(videoPaths)):int(propEnd*len(videoPaths))]
-    print(videoPaths)
 
     return videoPaths
 
@@ -485,7 +482,7 @@ def getGT(dataset,vidName):
 
     if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
 
-        shotBounds = processResults.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
+        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
 
         scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
         gt = framesToShot(scenesBounds,shotBounds)
