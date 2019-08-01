@@ -27,6 +27,7 @@ import load_data
 import metrics
 import utils
 import lossTerms
+import update
 
 def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
     ''' Train a model during one epoch
@@ -107,7 +108,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
             metrDict["DED"] += metrics.computeDED(output.data>0.5,target.long())
 
             #Store the f score of each example
-            updateHMDict(hmDict,cov,overflow,vidNames)
+            update.updateHMDict(hmDict,cov,overflow,vidNames)
 
             if allOut is None:
                 allOut = output.data
@@ -166,10 +167,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
     validBatch = 0
     nbVideos = 0
 
-
     for batch_idx, (data, audio,target,vidName,frameInds) in enumerate(loader):
-
-        #print(vidName,target.sum(),target.size())
 
         newVideo = (vidName != precVidName) or videoBegining
 
@@ -180,7 +178,6 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
             data, target,frameInds = data.cuda(), target.cuda(),frameInds.cuda()
             if not audio is None:
                 audio = audio.cuda()
-        #print(data.size())
 
         if args.temp_model.find("net") != -1:
             output = model.computeFeat(data,audio).data
@@ -193,11 +190,10 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
 
             output,h,c = output.data,h.data,c.data
 
-        updateFrameDict(frameIndDict,frameInds,vidName)
+        update.updateFrameDict(frameIndDict,frameInds,vidName)
 
         if newVideo and not videoBegining:
-            #print("targDict",targDict)
-            allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
+            allOutput,nbVideos = update.updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
         if newVideo:
             allTarget = target
             allOutput = output
@@ -212,7 +208,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
             break
 
     if not args.debug:
-        allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
+        allOutput,nbVideos = update.updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
 
     for key in outDict.keys():
         fullArr = torch.cat((frameIndDict[key].float(),outDict[key].permute(1,0)),dim=1)
@@ -244,116 +240,6 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
     else:
         return metricLastVal,outDict,targDict
 
-def updateHMDict(hmDict,coverage,overflow,vidNames):
-
-    for vidName in vidNames:
-        f_score = 2*coverage*(1-overflow)/(coverage+1-overflow)
-
-        if vidName in hmDict.keys():
-            hmDict[vidName].append(f_score)
-        else:
-            hmDict[vidName] = [f_score]
-def updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict):
-    if args.temp_model.find("net") != -1:
-        allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
-
-    weights = getWeights(allTarget,args.class_weight)
-    loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
-
-    metrDict["Loss"] += loss
-
-    outDict[precVidName] = allOutput
-    targDict[precVidName] = allTarget
-
-    cov,overflow,iou = metrics.binaryToMetrics(allOutput>0.5,allTarget)
-    metrDict["Coverage"] += cov
-    metrDict["Overflow"] += overflow
-    metrDict["True F-score"] += 2*cov*(1-overflow)/(cov+1-overflow)
-    metrDict["IoU"] += iou
-    metrDict["AuC"] += roc_auc_score(allTarget.view(-1).cpu().numpy(),allOutput.view(-1).cpu().numpy())
-    metrDict['DED'] += metrics.computeDED(allOutput.data>0.5,allTarget.long())
-
-    nbVideos += 1
-
-    return allOutput,nbVideos
-def updateFrameDict(frameIndDict,frameInds,vidName):
-    ''' Store the prediction of a model in a dictionnary with one entry per movie
-
-    Args:
-     - outDict (dict): the dictionnary where the scores will be stored
-     - output (torch.tensor): the output batch of the model
-     - frameIndDict (dict): a dictionnary collecting the index of each frame used
-     - vidName (str): the name of the video from which the score are produced
-
-    '''
-
-    if vidName in frameIndDict.keys():
-        reshFrInds = frameInds.view(len(frameInds),-1).clone()
-        frameIndDict[vidName] = torch.cat((frameIndDict[vidName],reshFrInds),dim=0)
-
-    else:
-        frameIndDict[vidName] = frameInds.view(len(frameInds),-1).clone()
-def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
-
-    firstEpoch = list(outDictEpochs.keys())[0]
-
-    for i,vidName in enumerate(outDictEpochs[firstEpoch].keys()):
-
-        fig = plt.figure()
-
-        targBounds = np.array(utils.binaryToSceneBounds(targDictEpochs[firstEpoch][vidName][0]))
-
-        cmap = cm.plasma(np.linspace(0, 1, len(targBounds)))
-
-        width = 0.2*len(outDictEpochs.keys())
-        off = width/2
-
-        plt.bar(len(outDictEpochs.keys())+off,targBounds[:,1]+1-targBounds[:,0],width,bottom=targBounds[:,0],color=cmap,edgecolor='black')
-
-        for j,epoch in enumerate(outDictEpochs.keys()):
-
-            predBounds = np.array(utils.binaryToSceneBounds(outDictEpochs[epoch][vidName][0]))
-            cmap = cm.plasma(np.linspace(0, 1, len(predBounds)))
-
-            plt.bar(epoch-1,predBounds[:,1]+1-predBounds[:,0],1,bottom=predBounds[:,0],color=cmap,edgecolor='black')
-
-        writer.add_figure(model_id+"_val"+"_"+vidName,fig,firstEpoch)
-def updateHardMin(epoch,epochs_hm,hmDict,trainDataset,args,kwargsTr,trainLoader):
-
-    if epoch % epochs_hm == 0 and epochs_hm != -1 and args.hm_prop > 0:
-
-        paths= trainDataset.videoPaths
-        names = list(map(lambda x: os.path.basename(os.path.splitext(x)[0]),paths))
-
-        for i in range(len(names)):
-            if names[i] in hmDict.keys():
-                hmDict[names[i]] = (i,hmDict[names[i]])
-
-        vidIndsScores = list(sorted([hmDict[name] for name in hmDict.keys()],key=lambda x:x[1]))
-        vidInds = list(map(lambda x:x[0],vidIndsScores))
-
-        sampler = load_data.Sampler(len(paths),trainDataset.nbShots,args.l_max,vidInds,args.hm_prop)
-        trainLoader = torch.utils.data.DataLoader(dataset=trainDataset,batch_size=args.batch_size,sampler=sampler, collate_fn=load_data.collateSeq, # use custom collate function here
-                          pin_memory=False,num_workers=args.num_workers)
-
-        kwargsTr["loader"] = trainLoader
-
-    return trainLoader,kwargsTr
-def updateLR(epoch,maxEpoch,lr,startEpoch,kwargsOpti,kwargsTr,lrCounter,net,optimConst):
-    #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
-    #The optimiser have to be rebuilt every time the learning rate is updated
-    if (epoch-1) % ((maxEpoch + 1)//len(lr)) == 0 or epoch==startEpoch:
-
-        kwargsOpti['lr'] = lr[lrCounter]
-        optim = optimConst(net.parameters(), **kwargsOpti)
-
-        kwargsTr["optim"] = optim
-
-        if lrCounter<len(lr)-1:
-            lrCounter += 1
-
-    return kwargsOpti,kwargsTr,lrCounter
-
 def agregateHMDict(hmDict):
 
     for vidName in hmDict.keys():
@@ -368,7 +254,7 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
         splitSizes.append(allFeats.size(1)%valLTemp)
 
     #chunkList = torch.split(allFeats,split_size_or_sections=splitSizes,dim=1)
-    chunkList = splitWithOverlap(allFeats,splitSizes,overlap)
+    chunkList = split(allFeats,splitSizes,overlap)
 
     sumSize = 0
 
@@ -385,7 +271,7 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
 
     return allOutput
 
-def splitWithOverlap(allFeat,splitSizes,overlap):
+def split(allFeat,splitSizes,overlap):
 
     chunkList = torch.split(allFeat,split_size_or_sections=splitSizes,dim=1)
 
@@ -503,6 +389,7 @@ def get_OptimConstructor_And_Kwargs(optimStr,momentum):
         kwargs = {'amsgrad':True}
 
     return optimConst,kwargs
+
 def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path,init_path_visual_temp):
     '''Initialize a network
 
@@ -551,6 +438,13 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
                 startEpoch = utils.findLastNumbers(init_path_visual_temp)
 
     return startEpoch
+
+def resetAdvIter(kwargsTr):
+    if not kwargsTr["discrLoader"] is None:
+        kwargsTr["discrIter"] = iter(kwargsTr["discrLoader"])
+    else:
+        kwargsTr["discrIter"] = None
+    return kwargsTr
 
 def evalAllImages(exp_id,model_id,model,audioModel,testLoader,cuda,log_interval):
     '''
@@ -658,13 +552,6 @@ def addValArgs(argreader):
                     help='If true, The chosen metric for chosing the best model will be maximised')
 
     return argreader
-
-def resetAdvIter(kwargsTr):
-    if not kwargsTr["discrLoader"] is None:
-        kwargsTr["discrIter"] = iter(kwargsTr["discrLoader"])
-    else:
-        kwargsTr["discrIter"] = None
-    return kwargsTr
 
 def main(argv=None):
 
@@ -806,7 +693,6 @@ def main(argv=None):
 
         img_size = (args.img_width,args.img_heigth)
 
-
         #Getting the contructor and the kwargs for the choosen optimizer
         optimConst,kwargsOpti = get_OptimConstructor_And_Kwargs(args.optim,args.momentum)
 
@@ -827,7 +713,7 @@ def main(argv=None):
 
         for epoch in range(startEpoch, args.epochs + 1):
 
-            kwargsOpti,kwargsTr,lrCounter = updateLR(epoch,args.epochs,args.lr,startEpoch,kwargsOpti,kwargsTr,lrCounter,net,optimConst)
+            kwargsOpti,kwargsTr,lrCounter = update.updateLR(epoch,args.epochs,args.lr,startEpoch,kwargsOpti,kwargsTr,lrCounter,net,optimConst)
 
             kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
             kwargsTr["model"],kwargsVal["model"] = net,net
@@ -837,13 +723,12 @@ def main(argv=None):
             if not args.no_train:
                 hmDict = trainFunc(**kwargsTr)
 
-                kwargsTr["loader"],kwargsTr = updateHardMin(epoch,args.epochs_hm,hmDict,trainDataset,args,kwargsTr,kwargsTr["loader"])
+                kwargsTr["loader"],kwargsTr = update.updateHardMin(epoch,args.epochs_hm,hmDict,trainDataset,args,kwargsTr,kwargsTr["loader"])
 
             else:
                 net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.no_train[0],args.no_train[1],epoch)))
 
             kwargsVal["metricLastVal"] = metricLastVal
-
 
             #Checking if validation has already been done
             if len(glob.glob("../results/{}/{}_epoch{}_*".format(args.exp_id,args.model_id,epoch))) < len(kwargsVal["loader"].videoPaths):
@@ -851,7 +736,7 @@ def main(argv=None):
                     metricLastVal,outDict,targDict = valFunc(**kwargsVal)
                 outDictEpochs[epoch] = outDict
                 targDictEpochs[epoch] = targDict
-                updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
+                update.updateHist(writer,args.model_id,outDictEpochs,targDictEpochs)
             else:
                 print("Validation epoch {} already done !".format(epoch))
 
