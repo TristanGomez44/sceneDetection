@@ -1,27 +1,19 @@
-
-import shotDetect
-import subprocess
-import xml.etree.ElementTree as ET
-import os
 import sys
-import cv2
-import numpy as np
 import glob
-import modelBuilder
-import torch
 
-import subprocess
+import numpy as np
+import torch
+from torchvision import transforms
+import torchvision
+import vggish_input
 
 import soundfile as sf
-import math
 from PIL import Image
-from torchvision import transforms
 
-import vggish_input
 import processResults
 import pims
 import time
-import torchvision
+
 import args
 import warnings
 warnings.filterwarnings('ignore',module=".*av.*")
@@ -443,10 +435,16 @@ def buildFrameTrainLoader(args):
 
 def findVideos(dataset,propStart,propEnd):
 
+    print(glob.glob("../data//*".format(dataset)))
+    print("../data/{}/*.*".format(dataset))
     videoPaths = sorted(glob.glob("../data/{}/*.*".format(dataset)))
+    print(videoPaths)
     videoPaths = list(filter(lambda x:x.find(".wav") == -1,videoPaths))
+    print(videoPaths)
     videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
+    print(videoPaths)
     videoPaths = np.array(videoPaths)[int(propStart*len(videoPaths)):int(propEnd*len(videoPaths))]
+    print(videoPaths)
 
     return videoPaths
 
@@ -582,22 +580,3 @@ def addArgs(argreader):
                         help='The average scene length in a training sequence')
 
     return argreader
-
-def main():
-
-    train_dataset = VideoFrameDataset("youtube_large",0,0.995,"bbc2",0,1,(299,299),True,600)
-
-    adv_batch_size = 32
-
-    sampler = AdvSampler(train_dataset.nbShots)
-    trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=adv_batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
-                      pin_memory=False,num_workers=0)
-
-    for i,(imgBatch,gt,vidNames) in enumerate(trainLoader):
-
-        print(i,imgBatch.size(),gt.size(),vidNames)
-
-
-
-if __name__ == "__main__":
-    main()

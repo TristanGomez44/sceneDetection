@@ -1,27 +1,21 @@
-import numpy as np
+
 from args import ArgReader
 import os
 import glob
-import processResults
-import cv2
-import subprocess
-import video2Tensor
-import vggish_input
-from torchvision import transforms
-import xml.etree.ElementTree as ET
-import soundfile as sf
-import torch
-import modelBuilder
-from PIL import Image
-import cv2
-import xml.etree.ElementTree as ET
-from skimage.transform import resize
-import sys
-import shotdetect
 import shutil
+import subprocess
+
+import torch
+from torch.distributions.gamma import Gamma
+import numpy as np
+import cv2
+import soundfile as sf
+import shotdetect
 import pims
 import h5py
-from torch.distributions.gamma import Gamma
+import cv2
+
+import processResults
 
 def main(argv=None):
 

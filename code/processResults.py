@@ -1,23 +1,24 @@
 
 from args import ArgReader
-import numpy as np
+
 import os
 import glob
+
+import torch
+import numpy as np
+import scipy as sp
+from skimage.transform import resize
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
-import sys
-import xml.etree.ElementTree as ET
+
 from sklearn.manifold import TSNE
 import matplotlib.cm as cm
 import pims
 import cv2
 from PIL import Image
-import torch
-import subprocess
-from skimage.transform import resize
+
 import load_data
 import modelBuilder
-import scipy as sp
 
 def resultTables(exp_ids,modelIds,thresList,epochList,dataset):
 
@@ -94,9 +95,9 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
                 repFilePaths = sorted(glob.glob("../results/{}/{}/*_{}.csv".format(exp_id,videoName,model_id)))
                 frameInd = np.array(list(map(lambda x:int(os.path.basename(x).split("_")[0]),repFilePaths)))
 
-                gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,videoName)).astype(int)
-                cmap = cm.rainbow(np.linspace(0, 1, gt.sum()+1))
+                gt = load_data.getGT(dataset,videoName)
 
+                cmap = cm.rainbow(np.linspace(0, 1, gt.sum()+1))
                 reps = np.array(list(map(lambda x:np.genfromtxt(x),repFilePaths)))
                 imageRep = 255*(reps-reps.min())/(reps.max()-reps.min())
                 imageRep = imageRep.transpose()
@@ -105,15 +106,12 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
                 imageRep = imageRep.convert('RGB')
                 imageRep.save("../vis/{}/{}_model{}_catRepr.png".format(exp_id,model_id,videoName))
 
+                #Computing the scene/color index of each frame
                 gt = gt[:len(reps)]
-
                 colorInds = np.cumsum(gt)
 
                 #Load the gt with the interval format
                 gt_interv = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,videoName)).astype(int)
-
-                #Computing the scene/color index of each frame
-                colorInds = ((gt_interv[:,0].reshape(-1,1) <= frameInd.reshape(1,-1))*(frameInd.reshape(1,-1) <= gt_interv[:,1].reshape(-1,1))).nonzero()[0]
 
                 repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(reps)
                 plt.figure()

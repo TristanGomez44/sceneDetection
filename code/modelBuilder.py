@@ -1,29 +1,11 @@
-import sys
-from torchvision.models.inception import inception_v3
-import cv2
-import glob
 import torch
-from skimage.transform import resize
-import numpy as np
-import math
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-
-import os
-import time
-
+from torch import nn
+from torch.nn import functional as F
+from torch.nn import DataParallel
 import resnet
 import densenet
-import resnetSeg
-import googleNet
-from torch.nn import functional as F
-
-import subprocess
-from torch import nn
 import vggish
-import vggish_input
 
-from torch.nn import DataParallel
 import args
 import processResults
 
@@ -46,28 +28,6 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
         if pretrainDataSet == "imageNet":
             featModel = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut)
             featModel.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
-        elif pretrainDataSet == "places365":
-            featModel = resnet.resnet50(pretrained=False,num_classes=365,layFeatCut=layFeatCut)
-
-            ####### This load code comes from https://github.com/CSAILVision/places365/blob/master/run_placesCNN_basic.py ######
-
-            # load the pre-trained weights
-            model_file = '%s_places365.pth.tar' % featModelName
-            if not os.access("../models/"+model_file, os.W_OK):
-                weight_url = 'http://places2.csail.mit.edu/models_places365/' + model_file
-                os.system('wget ' + weight_url)
-
-                os.rename(model_file, "../models/"+model_file)
-
-            checkpoint = torch.load("../models/"+model_file, map_location=lambda storage, loc: storage)
-            state_dict = {str.replace(k,'module.',''): v for k,v in checkpoint['state_dict'].items()}
-            featModel.load_state_dict(state_dict)
-        elif pretrainDataSet == "ADE20K":
-
-            orig_resnet = resnetSeg.resnet50(pretrained=False)
-            featModel = resnetSeg.ResnetSeg(orig_resnet)
-
-            featModel.load_state_dict(torch.load("../models/resnet50_ADE20K.pth"))
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
@@ -84,13 +44,6 @@ def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
         if pretrainDataSet == "imageNet":
             featModel = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut)
             featModel.load_state_dict(torch.load("../models/resnet18_imageNet.pth"))
-        else:
-            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
-
-    elif featModelName == "googLeNet":
-
-        if pretrainDataSet == "imageNet":
-            featModel = googleNet.googlenet(pretrained=True)
         else:
             raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
 
@@ -607,13 +560,3 @@ def addArgs(argreader):
                         help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
 
     return argreader
-
-def main():
-
-
-    discr = Discriminator(2048)
-
-    res = discr(torch.zeros((32,2048)))
-    print(res.shape)
-if __name__ == "__main__":
-    main()
