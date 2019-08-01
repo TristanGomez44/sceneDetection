@@ -25,119 +25,10 @@ plt.switch_backend('agg')
 import modelBuilder
 import load_data
 import metrics
-import processResults
+import utils
+import lossTerms
 
-def addSparsTerm(loss,args,output):
-
-    #Adding sparsity term
-    if args.sparsi_weig > 0:
-        loss += args.sparsi_weig*sparsiRew(output,args.sparsi_wind,args.sparsi_thres)
-
-    return loss
-def addDistTerm(loss,args,output,target):
-
-    #Adding distance to closest target term
-    if args.dist_weight > 0 and target.sum() > 0:
-
-        inds = torch.arange(output.size(1)).unsqueeze(0).unsqueeze(2).to(target.device)
-        distTerm = 0
-        nonZeroEx = 0
-        for i,targSeq in enumerate(target):
-            if targSeq.sum() > 0:
-                targInds = targSeq.nonzero().permute(1,0).unsqueeze(0)
-                distTerm +=args.dist_weight*((output[i]>0.5).long()*torch.min(torch.abs(inds-targInds),dim=2)[0]).float().mean()
-                nonZeroEx += 1
-
-        loss += distTerm/nonZeroEx
-    return loss
-def addAdvTerm(loss,args,feat,featModel,discrModel,discrIter,discrOptim):
-    #Adding adversarial term
-    if args.adv_weight > 0:
-        discrModel.zero_grad()
-
-        frames,gt,_ = discrIter.__next__()
-        frames,gt = frames.to(loss.device),gt.to(loss.device)
-
-        featAdv = featModel(frames)
-        featAdv = torch.cat((featAdv,feat.view(feat.size(0)*feat.size(1),-1)),dim=0)
-        gt = torch.cat((gt,torch.zeros(feat.size(0)*feat.size(1)).unsqueeze(1).to(loss.device)),dim=0)
-
-        pred = discrModel(featAdv)
-
-        discMeanAcc = ((pred.data > 0.5).float() == gt.data).float().mean()
-
-        dLoss = args.adv_weight*F.binary_cross_entropy(pred,gt)
-        dLoss.backward(retain_graph=True)
-        discrOptim.step()
-
-        loss += -args.adv_weight*F.binary_cross_entropy(pred,gt)
-    else:
-        discMeanAcc = 0
-
-    return loss,discMeanAcc
-def addSiamTerm(loss,args,featBatch,target):
-    target = torch.cumsum(target,dim=-1)
-
-    distPos,distNeg = 0,0
-
-    if args.siam_weight > 0:
-        #Parsing each example of the batch
-        for i,feat in enumerate(featBatch):
-            inds1,inds2 = torch.randint(feat.size(0),size=(2,args.siam_nb_samples))
-            feat1,feat2 = feat[inds1],feat[inds2]
-            targ1,targ2 = target[i][inds1],target[i][inds2]
-
-            dist = torch.pow(feat1-feat2,2).sum(dim=-1)
-            targ = (targ1==targ2).float()
-
-            loss += args.siam_weight*(targ*dist+(1-targ)*F.relu(args.siam_margin-dist)).mean()
-
-            distPos += dist[targ.long()].mean()
-            distNeg += dist[1-targ.long()].mean()
-
-    return loss,distPos/len(featBatch),distNeg/len(featBatch)
-
-def sparsiRew(output,wind,thres):
-
-    weight = torch.ones(1,1,wind).to(output.device)
-    output = output.unsqueeze(1)
-    avg_output = torch.nn.functional.conv1d(output, weight,padding=wind//2)
-    avg_output = F.relu(avg_output - thres).sum()
-
-    return avg_output
-def softTarget(predBatch,targetBatch,width):
-    ''' Convolve the target with a triangular window to make it smoother
-
-    Args :
-    - predBatch (torch.tensor): the batch of prediction
-    - targetBatch (torch.tensor): the batch of target
-    - width (int): the width of the triangular window (i.e. the number of steps over which the window is spreading)
-
-    Returns
-    - softTargetBatch (torch.tensor): the batch of soft targets
-    '''
-
-    device = predBatch.device
-    softTargetBatch = torch.zeros_like(targetBatch)
-
-    for i,target in enumerate(targetBatch):
-
-        inds = torch.arange(len(target)).unsqueeze(1).to(device).float()
-
-        sceneChangeInds = target.nonzero().view(-1).unsqueeze(0).float()
-
-        #A matrix containing the triangular window applied to each one of the target
-        softTarg = F.relu(1-(1.0/(width+1))*torch.abs(inds-sceneChangeInds))
-
-        #Agregates the columns of the matrix
-        softTarg = softTarg.mean(dim=1)
-
-        #By doing this, the element in the original target equal to 1 stays equal to 1
-        softTargetBatch[i] = torch.max(softTarg,target.float())
-
-    return softTargetBatch
-
-def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwargs):
+def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
     ''' Train a model during one epoch
 
     Args:
@@ -187,24 +78,16 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
 
             #Computing loss
 
-            if args.soft_loss:
-                output = output[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
-                target = target[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
+            output = output[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
+            target = target[:,args.train_step_to_ignore:target.size(1)-args.train_step_to_ignore]
 
-                softTarg = softTarget(output,target,width)
-                loss = F.binary_cross_entropy(output, softTarg)
-            else:
-                output = output[:,args.train_step_to_ignore:output.size(1)-args.train_step_to_ignore]
-                target = target[:,args.train_step_to_ignore:target.size(1)-args.train_step_to_ignore]
-
-                weights = getWeights(target,args.class_weight)
-                loss = F.binary_cross_entropy(output, target,weight=weights)
+            weights = getWeights(target,args.class_weight)
+            loss = F.binary_cross_entropy(output, target,weight=weights)
 
             #Adding loss term
-            loss = addSparsTerm(loss,args,output)
-            loss = addDistTerm(loss,args,output,target)
-            loss,discMeanAcc = addAdvTerm(loss,args,model.features,model.featModel,kwargs["discrModel"],kwargs["discrIter"],kwargs["discrOptim"])
-            loss,distPos,distNeg = addSiamTerm(loss,args,model.features,target)
+            loss = lossTerms.addDistTerm(loss,args,output,target)
+            loss,discMeanAcc = lossTerms.addAdvTerm(loss,args,model.features,model.featModel,kwargs["discrModel"],kwargs["discrIter"],kwargs["discrOptim"])
+            loss,distPos,distNeg = lossTerms.addSiamTerm(loss,args,model.features,target)
 
             loss.backward()
             optim.step()
@@ -249,7 +132,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,width,**kwarg
     agregateHMDict(hmDict)
 
     return hmDict
-def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyStop,metricLastVal,maximiseMetric):
+def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,metricLastVal,maximiseMetric):
     '''
     Validate a model. This function computes several metrics and return the best value found until this point.
 
@@ -314,7 +197,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
 
         if newVideo and not videoBegining:
             #print("targDict",targDict)
-            allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metrDict,outDict,targDict)
+            allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
         if newVideo:
             allTarget = target
             allOutput = output
@@ -329,7 +212,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,width,metricEarlyS
             break
 
     if not args.debug:
-        allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metrDict,outDict,targDict)
+        allOutput,nbVideos = updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict)
 
     for key in outDict.keys():
         fullArr = torch.cat((frameIndDict[key].float(),outDict[key].permute(1,0)),dim=1)
@@ -370,19 +253,12 @@ def updateHMDict(hmDict,coverage,overflow,vidNames):
             hmDict[vidName].append(f_score)
         else:
             hmDict[vidName] = [f_score]
-def updateMetrics(args,model,allOutput,allTarget,precVidName,width,nbVideos,metrDict,outDict,targDict):
+def updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict):
     if args.temp_model.find("net") != -1:
         allOutput = computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
 
-    if args.soft_loss:
-        softAllTarget = softTarget(allOutput,allTarget,width)
-        loss = F.binary_cross_entropy(allOutput,softAllTarget).data.item()
-    else:
-        weights = getWeights(allTarget,args.class_weight)
-        loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
-
-    if args.sparsi_weig > 0:
-        loss += args.sparsi_weig*sparsiRew(allOutput.data,args.sparsi_wind,args.sparsi_thres)
+    weights = getWeights(allTarget,args.class_weight)
+    loss = F.binary_cross_entropy(allOutput,allTarget,weight=weights).data.item()
 
     metrDict["Loss"] += loss
 
@@ -425,7 +301,7 @@ def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
 
         fig = plt.figure()
 
-        targBounds = np.array(processResults.binaryToSceneBounds(targDictEpochs[firstEpoch][vidName][0]))
+        targBounds = np.array(utils.binaryToSceneBounds(targDictEpochs[firstEpoch][vidName][0]))
 
         cmap = cm.plasma(np.linspace(0, 1, len(targBounds)))
 
@@ -436,7 +312,7 @@ def updateHist(writer,model_id,outDictEpochs,targDictEpochs):
 
         for j,epoch in enumerate(outDictEpochs.keys()):
 
-            predBounds = np.array(processResults.binaryToSceneBounds(outDictEpochs[epoch][vidName][0]))
+            predBounds = np.array(utils.binaryToSceneBounds(outDictEpochs[epoch][vidName][0]))
             cmap = cm.plasma(np.linspace(0, 1, len(predBounds)))
 
             plt.bar(epoch-1,predBounds[:,1]+1-predBounds[:,0],1,bottom=predBounds[:,0],color=cmap,edgecolor='black')
@@ -477,16 +353,6 @@ def updateLR(epoch,maxEpoch,lr,startEpoch,kwargsOpti,kwargsTr,lrCounter,net,opti
             lrCounter += 1
 
     return kwargsOpti,kwargsTr,lrCounter
-def updateSoftLossWidth(epoch,maxEpoch,soft_loss_width,kwargsTr,startEpoch,widthCounter):
-
-    if (epoch-1) % ((maxEpoch + 1)//len(soft_loss_width)) == 0 or epoch==startEpoch:
-
-        width = soft_loss_width[widthCounter]
-        if widthCounter<len(soft_loss_width)-1:
-            widthCounter += 1
-        kwargsTr["width"] = width
-
-    return kwargsTr,widthCounter,kwargsTr["width"]
 
 def agregateHMDict(hmDict):
 
@@ -615,32 +481,6 @@ def writeSummaries(metrDict,batchNb,writer,epoch,mode,model_id,exp_id,nbVideos=N
 
     return metrDict
 
-def findLastNumbers(weightFileName):
-    '''Extract the epoch number of a weith file name.
-
-    Extract the epoch number in a weight file which name will be like : "clustDetectNet2_epoch45".
-    If this string if fed in this function, it will return the integer 45.
-
-    Args:
-        weightFileName (string): the weight file name
-    Returns: the epoch number
-
-    '''
-
-    i=0
-    res = ""
-    allSeqFound = False
-    while i<len(weightFileName) and not allSeqFound:
-        if not weightFileName[len(weightFileName)-i-1].isdigit():
-            allSeqFound = True
-        else:
-            res += weightFileName[len(weightFileName)-i-1]
-        i+=1
-
-    res = res[::-1]
-
-    return int(res)
-
 def get_OptimConstructor_And_Kwargs(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
     Args:
@@ -697,7 +537,7 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
             state_dict = {k.replace("module.cnn.","cnn.module.").replace("scoreConv.weight","scoreConv.layers.weight").replace("scoreConv.bias","scoreConv.layers.bias"): v for k,v in params.items()}
 
             net.load_state_dict(state_dict)
-            startEpoch = findLastNumbers(init_path)
+            startEpoch = utils.findLastNumbers(init_path)
         else:
 
             params = torch.load(init_path_visual_temp)
@@ -708,7 +548,7 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
 
                 net.state_dict()[key].data += params[key].data -net.state_dict()[key].data
 
-                startEpoch = findLastNumbers(init_path_visual_temp)
+                startEpoch = utils.findLastNumbers(init_path_visual_temp)
 
     return startEpoch
 
@@ -775,16 +615,6 @@ def addLossArgs(argreader):
     argreader.parser.add_argument('--class_weight', type=float, metavar='CW',
                         help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
                         makes weights proportional to the class instance number of the other class.')
-    argreader.parser.add_argument('--sparsi_weig', type=float,metavar='SW',
-                        help='Weight of the term rewarding the sparsity in the score prediction')
-    argreader.parser.add_argument('--sparsi_wind', type=int,metavar='SW',
-                        help='Half-size of the window taken into account for the sparsity term')
-    argreader.parser.add_argument('--sparsi_thres', type=float,metavar='ST',
-                        help='Threshold above which the sum of scores in the window is considered too big ')
-    argreader.parser.add_argument('--soft_loss', type=args.str2bool,metavar='BOOL',
-                        help="To use target soften with a triangular kernel.")
-    argreader.parser.add_argument('--soft_loss_width', type=args.str2FloatList,metavar='WIDTH',
-                        help="The width of the triangular window of the soft loss (in number of shots). Can be a schedule like learning rate")
 
     argreader.parser.add_argument('--dist_weight', type=float,metavar='DW',
                         help="The weight of the distance to scene change term in the loss function")
@@ -988,11 +818,8 @@ def main(argv=None):
         if type(args.lr) is float:
             args.lr = [args.lr]
 
-        if type(args.soft_loss_width) is float:
-            args.soft_loss_width = [args.soft_loss_width]
-
         lrCounter = 0
-        widthCounter = 0
+
         metricLastVal = None
 
         outDictEpochs = {}
@@ -1001,7 +828,6 @@ def main(argv=None):
         for epoch in range(startEpoch, args.epochs + 1):
 
             kwargsOpti,kwargsTr,lrCounter = updateLR(epoch,args.epochs,args.lr,startEpoch,kwargsOpti,kwargsTr,lrCounter,net,optimConst)
-            kwargsTr,widthCounter,width = updateSoftLossWidth(epoch,args.epochs,args.soft_loss_width,kwargsTr,startEpoch,widthCounter)
 
             kwargsTr["epoch"],kwargsVal["epoch"] = epoch,epoch
             kwargsTr["model"],kwargsVal["model"] = net,net
@@ -1017,7 +843,7 @@ def main(argv=None):
                 net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.no_train[0],args.no_train[1],epoch)))
 
             kwargsVal["metricLastVal"] = metricLastVal
-            kwargsVal["width"] = width
+
 
             #Checking if validation has already been done
             if len(glob.glob("../results/{}/{}_epoch{}_*".format(args.exp_id,args.model_id,epoch))) < len(kwargsVal["loader"].videoPaths):
