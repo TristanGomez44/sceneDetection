@@ -256,14 +256,6 @@ class CNN_sceneDet(nn.Module):
                 raise NotImplementedError("Can't use densenet and fully connected layer pooling.")
 
             self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
-        elif self.pool == 'lstm':
-
-            self.lstm = nn.LSTM(input_size=self.featNb,hidden_size=self.hiddSize,num_layers=self.layNb,batch_first=True,dropout=self.dropout,bidirectional=True)
-            self.lin = nn.Linear(2*self.hiddSize,1)
-
-        elif self.pool == "cnn":
-
-            self.cnnPool = nn.Sequential(nn.Linear(self.sceneLenCnnPool*2048//32,self.hiddSize),nn.ReLU(),nn.Linear(self.hiddSize,1),nn.Sigmoid())
 
     def forward(self,x,gt=None,attList=None):
 
@@ -290,69 +282,6 @@ class CNN_sceneDet(nn.Module):
                 x = self.scoreConv(x.unsqueeze(1)).squeeze(1)
 
             x = torch.sigmoid(x)
-        elif self.pool == "lstm":
-
-            x= x.mean(dim=-1)
-
-            batchSceneProp = []
-            for i in range(x.size(0)):
-
-                parsedProportion = 0
-                scenePropList = []
-
-                while parsedProportion < 1:
-
-
-                    xToParse = x[i:i+1,int(parsedProportion*x.size(1)):]
-                    _,(h,_) = self.lstm(xToParse)
-
-                    h = h.view(self.layNb,2,self.hiddSize)[-1].contiguous().view(2*self.hiddSize).unsqueeze(0)
-
-                    sceneProp = torch.sigmoid(self.lin(h))
-
-                    if self.training:
-                        scenePropList.append(sceneProp.squeeze(1))
-                    else:
-                        scenePropList.append(sceneProp.squeeze(1).data)
-
-                    parsedProportion += sceneProp.data
-
-                batchSceneProp.append(torch.cat(scenePropList,dim=0))
-
-            return batchSceneProp
-        elif self.pool == "cnn":
-
-            #print(x.size())
-            x = x.mean(dim=2)
-            #print(x.size())
-
-            batchSceneProp = []
-            for i in range(x.size(0)):
-
-                parsedProportion = 0
-                scenePropList = []
-
-                while parsedProportion < 1:
-
-                    xToParse = x[i:i+1,int(parsedProportion*x.size(1)):]
-
-                    res = xToParse.permute(0,2,1)
-
-                    res = nn.functional.interpolate(res, size=self.sceneLenCnnPool,mode='linear')
-                    res = res.permute(0,2,1)
-                    res = res.contiguous().view(res.size(0),res.size(1)*res.size(2))
-                    sceneProp = self.cnnPool(res)
-
-                    if self.training:
-                        scenePropList.append(sceneProp.squeeze(1))
-                    else:
-                        scenePropList.append(sceneProp.squeeze(1).data)
-
-                    parsedProportion += sceneProp.data
-
-                batchSceneProp.append(torch.cat(scenePropList,dim=0))
-
-            return batchSceneProp
         else:
             raise ValueError("Unkown pool mode for CNN temp model {}".format(self.pool))
 
