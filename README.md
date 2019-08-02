@@ -32,45 +32,45 @@ The value of the --merge_videos argument is "avi" because the videos of this dat
 
 Dowload the videos with youtube-dl in a folder called "youtube" in the "data" folder :
 
-'''
+```
 youtube-dl -f 18 -o "%(title)s.%(ext)s" https://www.youtube.com/playlist?list=PLSdQjuD0Brw4R2I2jdLadTS6WPNcimfG6
-'''
+```
 
 The -f 18 argument download the video in a 640x360 mp4 format.
 
 Once the dataset is downloaded, group the videos by movies with the formatData.py script :
 
-'''
+```
 python formatData.py --dataset youtube --format_youtube
-'''
+```
 
 Then, merge the videos, extract the sound and create the annotations with the same script, different arguments :
 
-'''
+```
 python formatData.py --dataset youtube --merge_videos mp4
-'''
+```
 
 #### Youtube Large
 
 Dowload the videos with youtube-dl in a folder called "youtube" in the "data" folder :
 
-'''
+```
 youtube-dl -f 18 -ciw -o "%(title)s.%(ext)s" -v https://www.youtube.com/user/movieclips/
-'''
+```
 
 The -f 18 argument download the video in a 640x360 mp4 format.
 
 Once the dataset is downloaded, group the videos by movies with the formatData.py script :
 
-'''
+```
 python formatData.py --dataset youtube_large --format_youtube
-'''
+```
 
 Then, merge the videos, extract the sound and create the annotations with the same script, different arguments :
 
-'''
+```
 python formatData.py --dataset youtube_large --merge_videos mp4 --write-description
-'''
+```
 
 The --write-description also download the descriptions of the videos, necessary to find from which movie every video comes from.
 
@@ -84,7 +84,32 @@ alors in the "data" folder.
 
 The links to download each video from the OVSD dataset can be found on the IBM website : http://www.research.ibm.com/haifa/projects/imt/video/Video_DataSetTable.shtml
 
-Once the video are downloaded, put them in a folder called 'OVSD' in the 'data' folder. Also download the annotations (the button 'Full dataset meta-data download' at the bottom of the page) and put the folder containing them in the 'OVSD' folder as well. Ensure that the video name are the same than the annotations file. For example if a video is named 'filmA.avi' then its annotation should be named 'filmeA_scenes.txt'.
+Once the video are downloaded, put them in a folder called 'OVSD' in the 'data' folder. Also download the annotations (the button 'Full dataset meta-data download' at the bottom of the page) and put the folder containing them in the 'OVSD' folder as well. Ensure that the video name are the same than the annotations file. For example if a video is named 'filmA.avi' then its annotation should be named 'filmeA_scenes.txt'. Before using the dataset you must run the following command to run the shot segmentation by ffmpeg :
+
+```
+python formatData.py --dataset youtube_large --format_ovsd
+```
+
+You can change the default threshold value for shot detection with the "--shot_thres" argument :
+
+```
+python formatData.py --dataset OVSD --format_ovsd --shot_thres 0.6
+```
+
+
+### BBC
+
+To download the videos of, go to the following link : "https://www.mediafire.com/folder/texdwptt9242j/BBCPH". Once the video are downloaded, put them in a folder called "PlanetEarth" in the "data" folder. TO dowload the shots and scene segmentation ask them to the authors with this form "http://www.aimagelab.unimore.it/imagelab/page.asp?IdPage=5". Put the folder 'annotations' sent by the authors in the same folder than the videos.
+
+Run the following command :
+
+
+```
+python formatData.py --format_bbc
+```
+
+You cannot use the "--shot_thres" because the shots are pre-segmented.
+
 
 ## Usage
 
@@ -135,6 +160,14 @@ python processResults.py -c model.config --exp_id testExperience --model_id test
 
 Here, the videos from the first half of the dataset testDataset will be processed.
 
+### Other scripts
+
+The other scripts are the following :
+
+- args.py : Defines the arguments.
+- load_data.py : Contains the classes defining the loader to train the siamese network and the CNN-RNN
+- modelBuilder.py : Contains the classes definining the siamese model and the CNN-RNN
+- formatData.py : the script to format the data.
 
 ## Reproduce the results :
 
@@ -150,13 +183,3 @@ python trainVal.py -c model.config --exp_id improvements  --model_id FrameAtt   
 python trainVal.py -c model.config --exp_id improvements  --model_id VisualAndAudio  --epochs 100 --batch_size 1  --temp_model resnet50 --feat resnet50 --feat_audio vggish
 
 ```
-
-
-### Other scripts
-
-The other scripts are the following :
-
-- args.py : Defines the arguments.
-- load_data.py : Contains the classes defining the loader to train the siamese network and the CNN-RNN
-- modelBuilder.py : Contains the classes definining the siamese model and the CNN-RNN
-- formatData.py : the script to format the data.
