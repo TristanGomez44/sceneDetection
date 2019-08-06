@@ -153,7 +153,7 @@ def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTu
 
     return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
 
-def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
+def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
     '''
     Plot the representations of the shots of a video in a 2D space using t-sne algorithm. Each point represents a shot,
     its color indicates from which scene it comes from
@@ -163,7 +163,6 @@ def tsne(dataset,exp_id,model_id,seed,framesPerShots,nb_scenes=10):
     - exp_id (str): the experience name
     - model_id (str): the model name
     - seed (int): the seed to initialise the t-sne algorithm
-    - framesPerShots (int): the number of frames per shot
     - nb_scenes (int): the number of scenes to plot
 
     '''
@@ -794,7 +793,7 @@ def main(argv=None):
     argreader.parser.add_argument('--metric',type=str,default="IoU",metavar='METRIC',help='The metric to use. Can only be \'IoU\' for now.')
 
     argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. Also plots the representation of a video side by side to make an image. \
-                                    The --exp_id, --model_id, --frames_per_shot, --seed and --dataset_test arguments should be set.')
+                                    The --exp_id, --model_id, --seed and --dataset_test arguments should be set.')
 
     argreader.parser.add_argument('--score_vis_video',type=str,help='To plot the scene change score on the video itself. Requires the --dataset_test and --exp_id arguments to be set. The value is a path to a result file.')
     argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
@@ -849,7 +848,7 @@ def main(argv=None):
     args = argreader.args
 
     if args.tsne:
-        tsne(args.dataset_test,args.exp_id,args.model_id,args.seed,args.frames_per_shot)
+        tsne(args.dataset_test,args.exp_id,args.model_id,args.seed)
     if args.score_vis_video:
         scoreVis_video(args.dataset_test,args.exp_id,args.score_vis_video)
     if args.plot_cat_repr:

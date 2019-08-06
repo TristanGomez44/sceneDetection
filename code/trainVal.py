@@ -603,7 +603,7 @@ def main(argv=None):
 
         img_size = (args.img_width,args.img_heigth)
         testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),\
-                                          args.audio_len,args.resize_image,args.frames_per_shot,args.exp_id,args.random_frame_val)
+                                          args.audio_len,args.resize_image,args.exp_id,args.random_frame_val)
 
         if args.feat != "None":
             featModel = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
@@ -664,7 +664,7 @@ def main(argv=None):
 
         valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
                                             (args.img_width,args.img_heigth),audioLen,args.resize_image,\
-                                            args.frames_per_shot,args.exp_id,args.random_frame_val)
+                                            args.exp_id,args.random_frame_val)
 
         #Building the net
         net = modelBuilder.netBuilder(args)

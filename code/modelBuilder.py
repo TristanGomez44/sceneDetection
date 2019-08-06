@@ -70,27 +70,6 @@ def buildAudioFeatModel(audioFeatModelName):
 
     return model
 
-class FrameAttention(nn.Module):
-    ''' A frame attention module that computes a scalar weight for each frame in a batch
-
-    Args:
-    - nbFeat (int): the number of feature in the vector representing a frame
-    - frameAttRepSize (int): the size of the hidden state of the frame attention
-
-    '''
-
-    def __init__(self,nbFeat,frameAttRepSize):
-
-        super(FrameAttention,self).__init__()
-
-        self.linear = nn.Linear(nbFeat,frameAttRepSize)
-        self.innerProdWeights = nn.Parameter(torch.randn(frameAttRepSize))
-
-    def forward(self,x):
-        x = torch.tanh(self.linear(x))
-        attWeights = (x*self.innerProdWeights).sum(dim=-1,keepdim=True)
-        return attWeights
-
 class Discriminator(nn.Module):
 
     def __init__(self,inFeat):
@@ -295,15 +274,13 @@ class SceneDet(nn.Module):
     - audioFeatModelName (str): the audio architecture (see buildAudioFeatModel()). Should be set to 'None' to not use an audio model
     - hiddenSize,layerNb,dropout,bidirect : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
     - cuda (bool): whether or not the computation should be done on gpu
-    - framesPerShot (int): the number of frame to use to represent a shot
-    - frameAttRepSize (int): the size of the frame attention (see FrameAttention module)
     - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
     - chanTempMod, pretrTempMod, poolTempMod, dilTempMod: respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
         model is a resnet.
 
     '''
 
-    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,framesPerShot,frameAttRepSize,multiGPU,\
+    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,multiGPU,\
                         chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,sceneLenCnnPool,scoreConvAtt):
 
         super(SceneDet,self).__init__()
@@ -320,7 +297,6 @@ class SceneDet(nn.Module):
         else:
             self.audioFeatModel = None
 
-        self.framesPerShot = framesPerShot
         self.temp_model = temp_model
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
@@ -335,8 +311,6 @@ class SceneDet(nn.Module):
 
         if not self.audioFeatModel is None:
             self.nbFeat += 128
-
-        self.frameAtt = FrameAttention(self.nbFeat,frameAttRepSize)
 
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout,bidirect)
@@ -366,7 +340,7 @@ class SceneDet(nn.Module):
     def computeFeat(self,x,audio,h=None,c=None):
 
         origBatchSize = x.size(0)
-        origSeqLength = x.size(1)//self.framesPerShot
+        origSeqLength = x.size(1)
 
         x = x.contiguous().view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
 
@@ -378,13 +352,9 @@ class SceneDet(nn.Module):
 
             x = torch.cat((x,audio),dim=-1)
 
-        attWeights = self.frameAtt(x)
-
         #Unflattening
-        x = x.view(origBatchSize,origSeqLength,self.framesPerShot,-1)
-        attWeights = attWeights.view(origBatchSize,origSeqLength,self.framesPerShot,1)
+        x = x.view(origBatchSize,origSeqLength,-1)
 
-        x = (x*attWeights).sum(dim=-2)/attWeights.sum(dim=-2)
         return x
 
     def computeScore(self,x,h=None,c=None,gt=None,attList=None):
@@ -411,7 +381,7 @@ class SceneDet(nn.Module):
 def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.frames_per_shot,args.frame_att_rep_size,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
+                    args.cuda,args.lay_feat_cut,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
                     args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,args.scene_len_cnn_pool,\
                     args.score_conv_attention)
 
@@ -424,12 +394,6 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--feat_audio', type=str, metavar='N',
                         help='the net to use to produce audio feature for each shot')
-
-    argreader.parser.add_argument('--frames_per_shot', type=int, metavar='N',
-                        help='The number of frame to use to represent each shot')
-
-    argreader.parser.add_argument('--frame_att_rep_size', type=int, metavar='N',
-                        help='The size of the internal representation of the frame attention model')
 
     argreader.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
                         help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')

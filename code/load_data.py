@@ -102,12 +102,11 @@ class SeqTrDataset(torch.utils.data.Dataset):
     - imgSize (tuple): a tuple containing (in order) the width and size of the image
     - audioLen (int): the length of the audio extract for each shot
     - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
-    - framesPerShot (int): the number of frames to use to reprensent each shot
     - exp_id (str): the name of the experience
     - max_shots (int): the total number of shot to process before stopping the training epoch. The youtube_large dataset contains a million shots, which is why this argument is useful.
     '''
 
-    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,framesPerShot,exp_id,max_shots,avgSceneLen):
+    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,exp_id,max_shots,avgSceneLen):
 
         super(SeqTrDataset, self).__init__()
 
@@ -118,7 +117,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         self.lMin,self.lMax = lMin,lMax
         self.dataset = dataset
         self.audioLen = audioLen
-        self.framesPerShot = framesPerShot
         self.nbShots = 0
         self.exp_id = exp_id
         self.avgSceneLen = avgSceneLen
@@ -145,7 +143,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
     def __getitem__(self,vidInd):
 
-        data = torch.zeros(self.framesPerShot*self.lMax,3,self.imgSize[0],self.imgSize[1])
+        data = torch.zeros(self.lMax,3,self.imgSize[0],self.imgSize[1])
         targ = torch.zeros(self.lMax)
         vidNames = []
 
@@ -213,7 +211,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         #Selecting frame indexes
         shotBounds = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-        frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((self.framesPerShot,))
+        frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((1,))
 
         #Clamp the maximal value to the last frame index
         lastFrameInd = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max()
@@ -320,17 +318,15 @@ class TestLoader():
     - imgSize (tuple): a tuple containing (in order) the width and size of the image
     - audioLen (int): the length of the audio extract for each shot
     - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
-    - framesPerShot (int): the number of frames to use to reprensent each shot
     - exp_id (str): the name of the experience
     '''
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,framesPerShot,exp_id,randomFrame):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,exp_id,randomFrame):
         self.evalL = evalL
         self.dataset = dataset
 
         self.videoPaths = findVideos(dataset,propStart,propEnd)
 
-        self.framesPerShot = framesPerShot
         self.randomFrame = randomFrame
 
         self.exp_id = exp_id
@@ -375,7 +371,7 @@ class TestLoader():
             frameInds = self.regularlySpacedFrames(shotBounds[shotInds]).reshape(-1)
         else:
             shotBoundsToUse = torch.tensor(shotBounds[shotInds.astype(int)]).float()
-            frameInds = torch.distributions.uniform.Uniform(shotBoundsToUse[:,0], shotBoundsToUse[:,1]+1).sample((self.framesPerShot,)).long()
+            frameInds = torch.distributions.uniform.Uniform(shotBoundsToUse[:,0], shotBoundsToUse[:,1]+1).sample((1,)).long()
             frameInds = frameInds.transpose(dim0=0,dim1=1)
             frameInds = np.array(frameInds.contiguous().view(-1))
 
@@ -408,14 +404,14 @@ class TestLoader():
     def regularlySpacedFrames(self,shotBounds):
         ''' Select several frame indexs regularly spaced in each shot '''
 
-        frameInds = ((np.arange(self.framesPerShot)/self.framesPerShot)[np.newaxis,:]*(shotBounds[:,1]-shotBounds[:,0])[:,np.newaxis]+shotBounds[:,0][:,np.newaxis]).astype(int)
+        frameInds = ((np.arange(1)/1)[np.newaxis,:]*(shotBounds[:,1]-shotBounds[:,0])[:,np.newaxis]+shotBounds[:,0][:,np.newaxis]).astype(int)
 
         return frameInds
 
 def buildSeqTrainLoader(args,audioLen):
 
     train_dataset = SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
-                                        (args.img_width,args.img_heigth),audioLen,args.resize_image,args.frames_per_shot,args.exp_id,args.max_shots,args.avg_scene_len)
+                                        (args.img_width,args.img_heigth),audioLen,args.resize_image,args.exp_id,args.max_shots,args.avg_scene_len)
     sampler = Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
     trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
                       pin_memory=False,num_workers=args.num_workers)
@@ -502,8 +498,6 @@ def getGT(dataset,vidName,annotator=0):
         gt[sceneChangeInd[1:-1]] = 1
 
     return gt.astype(int)
-
-
 
 def addArgs(argreader):
 
