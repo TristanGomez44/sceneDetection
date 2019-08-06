@@ -467,7 +467,7 @@ def readAudio(audioData,i,fps,fs,audio_len):
 
     return fullArray
 
-def getGT(dataset,vidName):
+def getGT(dataset,vidName,annotator=0):
     ''' For one video, returns a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
 
     This function computes the 0,1 list and save if it does not already exists.
@@ -475,42 +475,35 @@ def getGT(dataset,vidName):
     Args:
     - dataset (str): the dataset name
     - vidName (str): the video name. It is the name of the videol file minux the extension.
+    - annotator (int): the number of the annotator desired. This arg should not be used except for the bbc dataset \
+                        where there is several annotator.
     Returns:
     - gt (array): a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
 
     '''
 
-    if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
+    if annotator == 0:
+        if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
 
-        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
+            shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
 
-        scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
-        gt = framesToShot(scenesBounds,shotBounds)
-        np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
+            scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
+            gt = utils.framesToShot(scenesBounds,shotBounds)
+            np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
+        else:
+            gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
     else:
-        gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
+        if dataset != "bbc":
+            raise ValueError("Only the dataset 'bbc' has several annotators.")
+
+        pathToAnnot = sorted(glob.glob("../data/PlanetEarth/annotations/scenes/annotator{}/*.txt".format(annotator)),key=utils.findNumbers)[videoName]
+        sceneChangeInd = np.genfromtxt(pathToAnnot,delimiter=",")
+        gt = np.zeros(sceneChangeInd.max())
+        gt[sceneChangeInd[1:-1]] = 1
 
     return gt.astype(int)
 
-def framesToShot(scenesBounds,shotBounds):
-    ''' Convert a list of scene bounds expressed with frame index into a list of scene bounds expressed with shot index
 
-    Args:
-    - scenesBounds (array): the scene bounds expressed with frame index
-    - shotBounds (array): the shot bounds expressed with frame index
-
-    Returns:
-    - gt (array): the scene bounds expressed with shot index
-
-    '''
-
-    gt = np.zeros(len(shotBounds))
-    sceneInd = 0
-
-    gt[np.power(scenesBounds[:,0][np.newaxis,:]-shotBounds[:,0][:,np.newaxis],2).argmin(axis=0)] = 1
-    gt[0] = 0
-
-    return gt
 
 def addArgs(argreader):
 
