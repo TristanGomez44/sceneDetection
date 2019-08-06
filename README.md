@@ -21,34 +21,11 @@ Untar the dowloaded videos and put the video files in the Holly2 folder.
 Group the videos coming from the same movie in separate folders. This an operation you have to do at hand (There is a thousand videos but they are numbered by movie : the videos 1 to x come from the movie A, the video x+1 to y come from the movie B, etc.)
 Use the script formatData.py pour merge the videos, extract the audio and create the annotations :
 
-'''
+```
 python formatData.py --dataset Holly2 --merge_videos avi
-'''
+```
 
 The value of the --merge_videos argument is "avi" because the videos of this dataset are in the avi format. This operation should take some time. The dataset is ready when it is done !
-
-
-#### Youtube
-
-Dowload the videos with youtube-dl in a folder called "youtube" in the "data" folder :
-
-```
-youtube-dl -f 18 -o "%(title)s.%(ext)s" https://www.youtube.com/playlist?list=PLSdQjuD0Brw4R2I2jdLadTS6WPNcimfG6
-```
-
-The -f 18 argument download the video in a 640x360 mp4 format.
-
-Once the dataset is downloaded, group the videos by movies with the formatData.py script :
-
-```
-python formatData.py --dataset youtube --format_youtube
-```
-
-Then, merge the videos, extract the sound and create the annotations with the same script, different arguments :
-
-```
-python formatData.py --dataset youtube --merge_videos mp4
-```
 
 #### Youtube Large
 
@@ -96,22 +73,53 @@ You can change the default threshold value for shot detection with the "--shot_t
 python formatData.py --dataset OVSD --format_ovsd --shot_thres 0.6
 ```
 
-
 ### BBC
 
-To download the videos of, go to the following link : "https://www.mediafire.com/folder/texdwptt9242j/BBCPH". Once the video are downloaded, put them in a folder called "PlanetEarth" in the "data" folder. TO dowload the shots and scene segmentation ask them to the authors with this form "http://www.aimagelab.unimore.it/imagelab/page.asp?IdPage=5". Put the folder 'annotations' sent by the authors in the same folder than the videos.
+To download the videos of, go to the following link : "https://www.mediafire.com/folder/texdwptt9242j/BBCPH". Once the video are downloaded, put them in a folder called "PlanetEarth" in the "data" folder. To dowload the shots and scene segmentation ask them to the authors with this form "http://www.aimagelab.unimore.it/imagelab/page.asp?IdPage=5". Put the folder 'annotations' sent by the authors in the same folder than the videos.
 
 Run the following command :
 
+```
+python formatData.py --format_bbc <EXT>
+```
+
+Where <EXT> is the extension of the videos you have downloaded. If the extension of your videos is "mp4", replace "<EXT>" in the above command by "mp4".
+You cannot use the "--shot_thres" argument because the shots are pre-segmented.
+
+### RAI Dataset
+
+First download the videos and the annotations with this link : "http://imagelab.ing.unimore.it/files/RaiSceneDetection.zip". Extract the folder in the archive
+and put it in the "data" folder. Then run :
 
 ```
-python formatData.py --format_bbc
+python formatData.py --format_rai
 ```
 
-You cannot use the "--shot_thres" because the shots are pre-segmented.
+You can use the "--shot_thres" because the shots are not pre-segmented.
 
+### AllyMcBeal
+
+First, get the 4 first episodes of AllyMcBeal's first season. Obviously, I am not providing you any link for that. Download the annotations with this link : "http://herve.niderb.fr/data/ally_mcbeal.html". Put the downloaded folder and the videos in a folder called "AllyMcBeal" in the "data" folder. Then run :
+
+```
+python formatData.py --format_allymcbeal <EXT>
+```
+
+Where <EXT> is the extension of the videos you have downloaded. If the extension of your videos is "mp4", replace "<EXT>" in the above command by "mp4".
+You cannot use the "--shot_thres" argument because the shots are pre-segmented.
 
 ## Usage
+
+Examples :
+
+A learning rate schedule example :
+
+```
+python trainVal.py -c model.config --exp_id testLR --model_id model1 --lr 0.01,0.001,0.0001 --epochs 300
+```
+
+This will use the learning rate 0.01 during the first 100 epochs, then 0.001 for the epoch 200 to 300 and will finish with 0.0001.
+
 
 ### Scripts you have to use :
 
@@ -119,7 +127,7 @@ The script you have to use are the following :
 
 #### The trainVal.py script :
 
-If you want to train a model called 'testModel' in an experiment called 'testExperience' during 30 epochs with the other parameters left with their default value, simply type :
+If you want to train a model called 'testModel' in an experiment called 'testExperiment' during 30 epochs with the other parameters left with their default value, simply type :
 
 ```
 python trainVal.py -c model.config --exp_id testExperience --model_id testModel --epochs 30
@@ -127,38 +135,26 @@ python trainVal.py -c model.config --exp_id testExperience --model_id testModel 
 
 The argument -c model.config allows the script to read the config file model.config which contains default value for all the arguments. All the arguments are detailed in the script args.py
 
-If you want to train a siamese network to differentiate image coming from different scenes, type :
-
-```
-python trainVal.py -c model.config --exp_id siamese --model_id siam1 --train_siam
-```
-
 To visualise the metrics evolution during the training, you can use tensorboardX :
 
 ```
-tensorboad --logdir=../results/expName
+tensorboad --logdir=../results/<expName>
 ```
 
-Where 'expName' is the name of the experiment. You should then be able to open your navigator and go to the adress indicated.
+Where '<expName>' is the id of the experiment. With the preceding example, it would be  :
+
+```
+tensorboad --logdir=../results/testExperience
+```
+
+You should then be able to open your navigator and go to the adress indicated.
 
 #### The processResults.py script :
-This contains functions to compute metrics and visualise the results of training. To plot the scores that a model produced on the video, on the video itself.
+This contains functions to compute metrics and visualise the results of training.
 
 ```
- python processResults.py -c model.config --score_vis_video ../results/keepLearning3/moreLayers_epoch99_Big_fish.csv --exp_id keepLearning3 --dataset_test Holly2
+ python processResults.py -c model.config
 ```
-
-Here the score produced by the model "moreLayers" at epoch 99 (from experience 'keepLearning3') on the video 'BigFish' (from dataset 'Holly2') will be plot on the video 'BigFish'.
-The resulting video will be written at the path "../vis/keepLearning3/moreLayers_Big_fish_score.mp4".
-
-
-To plot the t-sne representation of the shot produced by a model from all the video in a dataset, use the following command :
-
-```
-python processResults.py -c model.config --exp_id testExperience --model_id testModel --seed 1 --dataset_test testDataset --test_part_beg 0 --test_part_end 0.5 --tsne
-```
-
-Here, the videos from the first half of the dataset testDataset will be processed.
 
 ### Other scripts
 
@@ -168,18 +164,14 @@ The other scripts are the following :
 - load_data.py : Contains the classes defining the loader to train the siamese network and the CNN-RNN
 - modelBuilder.py : Contains the classes definining the siamese model and the CNN-RNN
 - formatData.py : the script to format the data.
+- metrics.py : functions that compute the metrics
+- utils.py : utility functions.
+- update.py : functions that update dictionairies and variables during training (dict contain the output or metric values, the current learning rate value, for example).
 
 ## Reproduce the results :
 
-Here, are the scripts to train the models with the different ideas I have proposed :
-
-```
-python trainVal.py -c model.config --exp_id improvements  --model_id baseline        --epochs 100
-python trainVal.py -c model.config --exp_id improvements  --model_id tempCnn         --epochs 100 --batch_size 4 --temp_model resnet50 --feat resnet50
-python trainVal.py -c model.config --exp_id improvements  --model_id longerSeq       --epochs 100 --l_min 55 --l_max 65
-python trainVal.py -c model.config --exp_id improvements  --model_id softLoss        --epochs 60  --batch_size 4 --soft_loss True --soft_loss_width 4
-python trainVal.py -c model.config --exp_id improvements  --model_id softLossAnneal  --epochs 100 --batch_size 4 --soft_loss True --soft_loss_width 10,9,8,7,6,5,4,3,2,1
-python trainVal.py -c model.config --exp_id improvements  --model_id FrameAtt        --epochs 100 --batch_size 1 --frames_per_shot 4
-python trainVal.py -c model.config --exp_id improvements  --model_id VisualAndAudio  --epochs 100 --batch_size 1  --temp_model resnet50 --feat resnet50 --feat_audio vggish
-
-```
+The script to train the models presented in the results section of the paper is "runExp.sh". The models were trained on four P100 GPUS with, so you may have to reduce :
+- the batch size (with the --batch_size argument)
+- the length of the training sequences (with the --l_max argument)
+- the number of key-frame passed at the same time through the visual model during validation (with the --val_l arg)
+- the length of the validation sequence. The validation sequences can be very long (some movie can contain several hundred shots) so they are split into chunks. The temporal model (LSTM or ResNet) reads one chunk at a time and its prediction made on one chunk are totally independant of the ones made on another chunk.
