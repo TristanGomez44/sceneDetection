@@ -551,6 +551,9 @@ def addValArgs(argreader):
     argreader.parser.add_argument('--maximise_metric', type=args.str2bool,metavar='BOOL',
                     help='If true, The chosen metric for chosing the best model will be maximised')
 
+    argreader.parser.add_argument('--compute_val_metrics', type=args.str2bool,metavar='BOOL',
+                    help='If false, the metrics will not be computed during validation, but the scores produced by the models will still be saved')
+
     return argreader
 
 def main(argv=None):
