@@ -40,8 +40,7 @@ def main(argv=None):
     argreader.parser.add_argument('--format_ally_mcbeal',type=str,metavar="EXT",help='Format the Ally McBeal dataset. \
                                             The value is the extension of the video file. E.g : \"--format_ally_mcbeal avi\".')
 
-    argreader.parser.add_argument('--format_rai',type=str,metavar="EXT",help='Format the RAI dataset. \
-                                            The value is the extension of the video file. E.g : \"--format_rai mp4\".')
+    argreader.parser.add_argument('--format_rai',action='store_true',help='Format the RAI dataset.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -338,8 +337,8 @@ def main(argv=None):
             tripletToInterv(rawAnnotationFilePaths[i],"scenes",fps,frameNb,"../data/allymcbeal/annotations/{}_scenes.txt".format(i))
 
     if args.format_rai:
-        videoPaths = sorted(glob.glob("../data/RAIDataset/*.{}".format(args.format_rai)))
-        rawAnnotationFilePaths = sorted(glob.glob("../data/RAIDataset/annotations/*txt"))
+        videoPaths = sorted(glob.glob("../data/RAIDataset/videos/*.mp4"),key=utils.findNumbers)
+        rawAnnotationFilePaths = sorted(glob.glob("../data/RAIDataset/scenes_*.txt"),key=utils.findNumbers)
 
         if not os.path.exists("../data/rai/annotations"):
             os.makedirs("../data/rai/annotations")
@@ -371,7 +370,7 @@ def main(argv=None):
                     shotBoundsFrame[-1,1] = frameNb-1
                     np.savetxt("../data/rai/{}/result.csv".format(vidName),shotBoundsFrame)
 
-            scenes = np.genfromtxt("../data/RAIDataset/annotations/scenes_{}.txt".format(vidName+1))
+            scenes = np.genfromtxt("../data/RAIDataset/scenes_{}.txt".format(vidName+1))
             scenes[-1,1] = frameNb
 
             np.savetxt("../data/rai/annotations/{}_scenes.txt".format(vidName),scenes-1)
