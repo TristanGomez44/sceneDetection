@@ -2,6 +2,8 @@ import pims
 import numpy as np
 import xml.etree.ElementTree as ET
 import os
+import processResults
+
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
                 into a list of intervals i.e. a scene boundary array relative to shot index
@@ -24,34 +26,25 @@ def binaryToSceneBounds(scenesBinary):
 
     return sceneBounds
 
-def frame_to_shots(dataset,pathToXml,scenesF):
-    ''' Computes scene boundaries relative with shot index instead of frame index '''
+def framesToShot(scenesBounds,shotBounds):
+    ''' Convert a list of scene bounds expressed with frame index into a list of scene bounds expressed with shot index
 
-    shotsF = xmlToArray(pathToXml)
+    Args:
+    - scenesBounds (array): the scene bounds expressed with frame index
+    - shotBounds (array): the shot bounds expressed with frame index
 
-    #Computing scene boundaries with shot number instead of frame
-    scenesS = []
+    Returns:
+    - gt (array): the scene bounds expressed with shot index
 
-    shotInd = 0
+    '''
+
+    gt = np.zeros(len(shotBounds))
     sceneInd = 0
 
-    currShotStart = 0
+    gt[np.power(scenesBounds[:,0][np.newaxis,:]-shotBounds[:,0][:,np.newaxis],2).argmin(axis=0)] = 1
+    gt[0] = 0
 
-    while shotInd<len(shotsF) and sceneInd<len(scenesF):
-
-        if shotsF[shotInd,0] <= scenesF[sceneInd,1] and scenesF[sceneInd,1] <= shotsF[shotInd,1]:
-
-            #This condition is added just to prevent a non-sense line to be written at the end
-            if currShotStart<=shotInd:
-                scenesS.append([currShotStart,shotInd])
-
-            currShotStart = shotInd+1
-
-            sceneInd += 1
-        else:
-            shotInd+=1
-
-    return scenesS
+    return gt
 
 def shots_to_frames(pathToXml,scenesS):
     ''' Computes scene boundaries file with frame index instead of shot index '''
@@ -96,13 +89,12 @@ def getPath(annotFold,modelExpId,modelId,modelEpoch,epiInd,epiNames,annotationIn
     else:
         return "../results/{}/{}_epoch{}_{}.csv".format(modelExpId,modelId,modelEpoch,epiInd)
 
-def toBinary(segmPath,shotNb,targetNbScene=None):
+def toBinary(segmPath,shotNb,**kwargs):
     ''' Read and convert a scene segmentation from the format given in the BBC dataset (list of starts on one line)
     into the binary format (list of 0 and 1, with one where the scene is changing).
-
     It also read segmentation in the model format, which is the format produced after the eval function of trainVal.py
-
     '''
+
     segm = np.genfromtxt(segmPath)
 
     if np.isnan(segm).any():
@@ -112,17 +104,11 @@ def toBinary(segmPath,shotNb,targetNbScene=None):
         binary[0] = 0
         return binary.astype(int)
     else:
-        if not targetNbScene is None:
-            #Finding the threshold to get a number of scene as close as possible from the desired number
-            thres = 1
-            nbScene = 0
-            while nbScene <  targetNbScene:
-                thres -= 0.05
-                precNbScene = nbScene
-                nbScene = (segm[:,1]>thres).sum()
 
-            if np.abs(precNbScene-targetNbScene)<np.abs(nbScene-targetNbScene):
-                thres += 0.05
+        if kwargs["fine_tuned_thres"] == True:
+            _,thres = processResults.bestThres(kwargs["videoName"],kwargs["resFilePaths"],kwargs["thresList"],kwargs["dataset"],\
+                              kwargs["videoNameDict"],kwargs["metTun"],kwargs["metric"],kwargs["annotatorGT"])
+            print(kwargs["metric"],thres)
         else:
             thres = 0.5
 
@@ -137,3 +123,29 @@ def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
 
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
+
+def findLastNumbers(weightFileName):
+    '''Extract the epoch number of a weith file name.
+
+    Extract the epoch number in a weight file which name will be like : "clustDetectNet2_epoch45".
+    If this string if fed in this function, it will return the integer 45.
+
+    Args:
+        weightFileName (string): the weight file name
+    Returns: the epoch number
+
+    '''
+
+    i=0
+    res = ""
+    allSeqFound = False
+    while i<len(weightFileName) and not allSeqFound:
+        if not weightFileName[len(weightFileName)-i-1].isdigit():
+            allSeqFound = True
+        else:
+            res += weightFileName[len(weightFileName)-i-1]
+        i+=1
+
+    res = res[::-1]
+
+    return int(res)
