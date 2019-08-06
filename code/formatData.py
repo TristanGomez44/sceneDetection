@@ -26,7 +26,10 @@ def main(argv=None):
     argreader.parser.add_argument('--dataset', type=str, metavar='N',help='The dataset')
     argreader.parser.add_argument('--merge_videos',type=str, metavar='EXT',help='Accumulate the clips from a folder to obtain one video per movie in the dataset. The value \
                                     is the extension of the video files, example : \'avi\'.')
-    argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube and the youtube_large datasets. Put the clips into separate folder')
+
+    argreader.parser.add_argument('--compute_only_gt',action='store_true',help='To compute only gt when using --merge_videos')
+
+    argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube_large datasets. Put the clips into separate folder')
     argreader.parser.add_argument('--format_bbc',type=str,metavar='EXT',help='Format the bbc dataset. The value is the extension of the video file. E.g : \"--format_bbc mp4\".')
     argreader.parser.add_argument('--format_bbc2',nargs=2,type=str,metavar='EXT',help='Format the bbc season 2 dataset. As there is no annotation, artificial annotation are built.\
                                                                                        The first value is the extension of the video file. E.g : \"--format_bbc2 mp4\". The second value\
@@ -44,38 +47,6 @@ def main(argv=None):
     argreader.getRemainingArgs()
 
     args = argreader.args
-
-    if args.format_youtube and args.dataset == "youtube":
-
-        #Removing non-scene video (montages, trailer etc.)
-        videoPaths = sorted(glob.glob("../data/{}/*.*".format(args.dataset)))
-
-        videoToRm = list(filter(lambda x: os.path.basename(x).find("Movie_Clip") == -1 \
-                                      and os.path.basename(x).find("Movie Clip") == -1,videoPaths))
-
-        for videoPath in videoToRm:
-            try:
-                os.remove(videoPath)
-            except IsADirectoryError:
-                pass
-
-        removeBadChar(args.dataset)
-
-        #Grouping clip by movie
-        for videoPath in videoPaths:
-            print(videoPath)
-
-            movieName = os.path.splitext(os.path.basename(videoPath))[0].split("_-_")[0]
-            movieName = ''.join([i for i in movieName if not i.isdigit()])
-
-            folder = "../data/{}/{}".format(args.dataset,movieName)
-
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-
-            targetPath = folder+"/"+os.path.basename(videoPath)
-
-            os.rename(videoPath,targetPath)
 
     if args.format_youtube and args.dataset == "youtube_large":
 
@@ -165,109 +136,34 @@ def main(argv=None):
 
     if args.merge_videos:
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         if not os.path.exists("../data/{}/annotations".format(args.dataset)):
             os.makedirs("../data/{}/annotations".format(args.dataset))
 
+        #Collecting video folders where are stored all the clips
         videoFoldPaths = sorted(glob.glob("../data/{}/*/".format(args.dataset)))
         videoFoldPaths = list(filter(lambda x:x.find("annotations") == -1,videoFoldPaths))
 
         for videoFoldPath in videoFoldPaths:
             print(videoFoldPath)
 
-            accVidPath = videoFoldPath[:-1]+"_tmp.{}".format(args.merge_videos)
+            #The temporary path to the concatenated video
+            catVidPath = videoFoldPath[:-1]+"_tmp.{}".format(args.merge_videos)
 
-            if not os.path.exists(accVidPath.replace("_tmp","")):
+            #Concatenate all the videos and build the ground truth file
+            if (not os.path.exists(catVidPath.replace("_tmp",""))) or args.compute_only_gt:
+                processVideo(catVidPath,videoFoldPath,args.merge_videos,args.compute_only_gt,args.dataset)
 
-                accumulatedVideo = None
-                gt = []
-                startFr = -1
-                accAudioData = None
-
-                fileToCat = ''
-
-                clips = sorted(glob.glob(videoFoldPath+"/*.{}".format(args.merge_videos)))
-                clips = list(filter(lambda x: x.find("_cut.") ==-1,clips))
-
-                totalFrameNb = 0
-                for k,videoPath in enumerate(clips):
-                    print("\t",videoPath)
-
-                    cap = cv2.VideoCapture(videoPath)
-                    extractAudio(videoPath)
-                    accAudioData,fs = accumulateAudio(videoPath.replace(".{}".format(args.merge_videos),".wav"),accAudioData)
-
-                    #Getting the number of frames of the video
-                    nbFrames = getNbFrames(videoPath)
-                    fps = utils.getVideoFPS(videoPath)
-
-                    if args.dataset == "youtube_large":
-                        stopFrame = nbFrames-32*fps
-                    elif args.dataset == "bbcEarth":
-                        stopFrame = nbFrames-20*fps
-                    else:
-                        stopFrame = nbFrames
-
-                    gt.append([totalFrameNb,totalFrameNb+stopFrame])
-                    totalFrameNb += stopFrame+1
-
-                    if args.dataset == "youtube_large" or args.dataset == "bbcEarth":
-                        #Remove the end landmark with ffpmeg
-                        subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
-                        fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
-                    else:
-                        fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath))
-
-                with open(videoFoldPath+"/fileToCat.txt","w") as text_file:
-                    print(fileToCat,file=text_file)
-
-                #Concatenate the videos
-                subprocess.call("ffmpeg -v error -safe 0 -f concat -i {} -c copy -an {}".format(videoFoldPath+"/fileToCat.txt",accVidPath.replace("_tmp","")),shell=True)
-
-                if args.dataset == "youtube_large" or args.dataset == "bbcEarth":
-                    #Removing cut file created by ffmpeg
-                    for cutClipPath in sorted(glob.glob(videoFoldPath+"/*cut.{}".format(args.merge_videos))):
-                        os.remove(cutClipPath)
-
-                wavFilePath = accVidPath.replace(".{}".format(args.merge_videos),".wav")
-                if len(accAudioData.shape) == 1:
-                    sf.write(wavFilePath,accAudioData[:,np.newaxis],fs)
-                else:
-                    sf.write(wavFilePath,accAudioData,fs)
-
-                vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
-
-                gt = np.array(gt).astype(int)
-                gt[-1,1] = getNbFrames(accVidPath.replace("_tmp",""))-1
-                np.savetxt("../data/{}/annotations/{}_scenes.txt".format(args.dataset,vidName),gt)
-
-                os.rename(accVidPath.replace(".{}".format(args.merge_videos),".wav"),accVidPath.replace(".{}".format(args.merge_videos),".wav").replace("_tmp",""))
-
-            nbFrames = getNbFrames(accVidPath.replace("_tmp",""))
-            fps = utils.getVideoFPS(accVidPath.replace("_tmp",""))
+            nbFrames = getNbFrames(catVidPath.replace("_tmp",""))
+            fps = utils.getVideoFPS(catVidPath.replace("_tmp",""))
 
             #Detecting shots
-            vidName = os.path.basename(os.path.splitext(accVidPath.replace("_tmp",""))[0])
+            vidName = os.path.basename(os.path.splitext(catVidPath.replace("_tmp",""))[0])
             if not os.path.exists("../data/{}/{}/result.csv".format(args.dataset,vidName)):
 
-                shotBoundsFrame = detect_format_shots(accVidPath.replace("_tmp",""),args.shot_thres,nbFrames,fps)
+                shotBoundsFrame = detect_format_shots(catVidPath.replace("_tmp",""),args.shot_thres,nbFrames,fps)
                 np.savetxt("../data/{}/{}/result.csv".format(args.dataset,vidName),shotBoundsFrame)
 
-            #Remove the temporary wav files:
-            for wavFilePath in sorted(glob.glob(videoFoldPath+"/*.wav")):
-                os.remove(wavFilePath)
-
-            #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
-            resPath = "../data/{}/{}/result.xml".format(args.dataset,vidName)
-            res = utils.xmlToArray(resPath)
-
-            if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
-
-                if not os.path.exists("../data/youtBadShotDet/"):
-                    os.makedirs("../data/youtBadShotDet/")
-
-                shutil.move(os.path.dirname(resPath),"../data/youtBadShotDet/")
-                shutil.move(os.path.dirname(resPath)+".mp4","../data/youtBadShotDet/")
+            removeBadShotVideos(args.dataset,vidName)
 
     if args.format_bbc:
 
@@ -411,9 +307,6 @@ def main(argv=None):
                     os.makedirs("../data/OVSD/{}/".format(vidName))
                 np.savetxt("../data/OVSD/{}/result.csv".format(vidName),shotBoundsFrame)
 
-            #Extract audio
-            extractAudio(path)
-
     if args.format_ally_mcbeal:
 
         videoPaths = sorted(glob.glob("../data/AllyMcBeal/*.{}".format(args.format_ally_mcbeal)))
@@ -483,6 +376,87 @@ def main(argv=None):
 
             np.savetxt("../data/rai/annotations/{}_scenes.txt".format(vidName),scenes-1)
 
+def removeBadShotVideos(dataset,vidName):
+    #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
+    resPath = "../data/{}/{}/result.xml".format(dataset,vidName)
+    res = utils.xmlToArray(resPath)
+
+    if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
+
+        if not os.path.exists("../data/youtBadShotDet/"):
+            os.makedirs("../data/youtBadShotDet/")
+
+        shutil.move(os.path.dirname(resPath),"../data/youtBadShotDet/")
+        shutil.move(os.path.dirname(resPath)+".mp4","../data/youtBadShotDet/")
+
+def processVideo(catVidPath,videoFoldPath,videoExtension,compute_only_gt,dataset):
+
+    gt = []
+    startFr = -1
+
+    fileToCat = ''
+
+    clips = sorted(glob.glob(videoFoldPath+"/*.{}".format(videoExtension)))
+    clips = list(filter(lambda x: x.find("_cut.") ==-1,clips))
+
+    totalFrameNb = 0
+    for k,videoPath in enumerate(clips):
+        totalFrameNb,fileToCat = processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt)
+
+    if not compute_only_gt:
+        with open(videoFoldPath+"/fileToCat.txt","w") as text_file:
+            print(fileToCat,file=text_file)
+
+        #Concatenate the videos
+        subprocess.call("ffmpeg -v error -safe 0 -f concat -i {} -c copy -an {}".format(videoFoldPath+"/fileToCat.txt",catVidPath.replace("_tmp","")),shell=True)
+
+        if dataset == "youtube_large" or dataset == "bbcEarth":
+            #Removing cut file created by ffmpeg
+            for cutClipPath in sorted(glob.glob(videoFoldPath+"/*cut.{}".format(videoExtension))):
+                os.remove(cutClipPath)
+
+    vidName = os.path.basename(os.path.splitext(catVidPath.replace("_tmp",""))[0])
+
+    gt = np.array(gt).astype(int)
+    gt[-1,1] = getNbFrames(catVidPath.replace("_tmp",""))-1
+    np.savetxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName),gt)
+
+def processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt):
+
+    print("\t",videoPath)
+
+    #Getting the number of frames of the video
+    nbFrames = getNbFrames(videoPath)
+    fps = utils.getVideoFPS(videoPath)
+
+    if dataset == "youtube_large":
+        stopFrame = nbFrames-32*fps
+    elif dataset == "bbcEarth":
+        stopFrame = nbFrames-20*fps
+    else:
+        stopFrame = nbFrames
+
+    gt.append([totalFrameNb,totalFrameNb+stopFrame])
+    totalFrameNb += stopFrame+1
+
+    if not compute_only_gt:
+        if dataset == "youtube_large":
+            #Remove the end landmark with ffpmeg
+            subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
+            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
+        elif dataset == "bbcEarth":
+
+            if fps == 25:
+                subprocess.call("ffmpeg -v error -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
+            else:
+                subprocess.call("ffmpeg -v error -r 25 -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
+
+            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
+        else:
+            raise ValueError("Unkown dataset to use with --merge_videos : {}".format(dataset))
+
+    return totalFrameNb,fileToCat
+
 def tripletToInterv(h5FilePath,segKey,fps,frameNb,savePath):
     """ Convert from the format found in the h5py files (i.e. the Ally McBeal annotations \
     into the intervals format """
@@ -531,8 +505,6 @@ def detect_format_shots(path,shot_thres,frameNb,fps):
 
     #Detecting shots
     shotBoundsTime = shotdetect.extract_shots_with_ffprobe(path,threshold=shot_thres)
-
-    np.savetxt(path.replace(".mp4","_tempShotSeg.csv"),np.array(shotBoundsTime))
 
     #Shot boundaries as a function of frame index instead of time
     shotBoundsFrame = (np.array(shotBoundsTime)*fps).astype(int)
