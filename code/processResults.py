@@ -494,15 +494,13 @@ def convScoPlot(weightFile):
     plt.plot(fft)
     plt.savefig("../vis/{}/model{}_epoch{}_fourrier.png".format(exp_id,model_id,epoch))
 
-def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_beg,test_part_end,plotDist=False):
+def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,plotDist,epoch):
 
-    resFilePaths = sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)))
+    resFilePaths = sorted(glob.glob("../results/{}/{}_epoch{}*.csv".format(exp_id,model_id,epoch)))
 
-    videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset_test)))))
-    videoPaths = list(filter(lambda x:x.find(".xml") == -1,videoPaths))
-    videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
-    videoPaths = np.array(videoPaths)[int(test_part_beg*len(videoPaths)):int(test_part_end*len(videoPaths))]
+    videoPaths = load_data.findVideos(dataset_test,propStart=0,propEnd=1)
     videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
+
     print("../results/{}/{}_epoch*.csv".format(exp_id,model_id))
 
     scoresNewScAll,scoresNoScAll,scoAccNewScAll,scoAccNoScAll = np.array([]),np.array([]),np.array([]),np.array([])
@@ -524,6 +522,9 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
             fig = plt.figure(figsize=(30,5))
             ax1 = fig.add_subplot(111)
 
+            for item in ([ax1.title, ax1.xaxis.label, ax1.yaxis.label] + ax1.get_xticklabels() + ax1.get_yticklabels()):
+                item.set_fontsize(20)
+
             legHandles = []
 
             #Plot the ground truth transitions
@@ -535,6 +536,9 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
             #Plot the scores
             legHandles += ax1.plot(np.arange(len(scores)),scores,color="blue",label="Scene change score")
 
+            plt.xlabel("Time (shot index)")
+            plt.ylabel("Probability of scene change")
+            plt.tight_layout()
             plt.savefig("../vis/{}/Scores_{}.png".format(exp_id,fileName))
             plt.close()
             if plotDist:
@@ -548,6 +552,9 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,test_part_b
                 legend = fig.legend(handles=legHandles, loc='center right' ,title="")
                 fig.gca().add_artist(legend)
 
+                plt.xlabel("Time (shot index)")
+                plt.ylabel("Distance")
+                plt.tight_layout()
                 plt.savefig("../vis/{}/Dists_{}_.png".format(exp_id,fileName))
                 plt.close()
 
@@ -591,10 +598,13 @@ def plotHist(gt,signal,exp_id,fileName,sigName,sigShortName):
     sigMax = max(signal_newScene.max(),signal_noNewScene.max())
     sigMin = min(signal_newScene.min(),signal_noNewScene.min())
 
+    plt.ylabel("Density")
+    plt.xlabel("Probability of scene change")
     plt.hist(signal_newScene,label="{} when scene change".format(sigName),alpha=0.5,range=(sigMin,sigMax),density=True,bins=30)
     plt.hist(signal_noNewScene,label="{} when no scene change".format(sigName),alpha=0.5,range=(sigMin,sigMax),density=True,bins=30)
     plt.legend()
     plt.savefig("../vis/{}/Hist_{}_{}.png".format(exp_id,fileName,sigShortName))
+    plt.tight_layout()
     plt.close()
 
 def plot2DHist(sigName1,sigName2,sigShortName1,sigShortName2,sig1,sig2,sig1Range,sig2Range,label,exp_id,fileName):
@@ -800,7 +810,10 @@ def main(argv=None):
     argreader.parser.add_argument('--conv_sco_plot',type=str,help='To plot the frequency response of the 1D filter learned by a model filtering its scores. The value is the path to the weight file.')
 
     argreader.parser.add_argument('--plot_score',action="store_true",help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
-                                                                            The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments.')
+                                                                            The --model_id argument must be set, along with the --exp_id, --dataset_test and --epoch_to_plot arguments.')
+
+    argreader.parser.add_argument('--epoch_to_plot',type=int,metavar="N",help='The epoch at which to plot the predictions when using the --plot_score argument')
+
     argreader.parser.add_argument('--untrained_exp_and_model_id',default=[None,None],type=str,nargs=2,help='To plot the distance between features computed by the network before training when using the --plot_score arg.\
                                                                                         The values are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
     argreader.parser.add_argument('--plot_dist',action="store_true",help='To plot the distance when using the --plot_score argument')
@@ -856,7 +869,7 @@ def main(argv=None):
     if args.conv_sco_plot:
         convScoPlot(args.conv_sco_plot)
     if args.plot_score:
-        plotScore(args.exp_id,args.model_id,args.untrained_exp_and_model_id[0],args.untrained_exp_and_model_id[1],args.dataset_test,args.test_part_beg,args.test_part_end,args.plot_dist)
+        plotScore(args.exp_id,args.model_id,args.untrained_exp_and_model_id[0],args.untrained_exp_and_model_id[1],args.dataset_test,args.plot_dist,args.epoch_to_plot)
     if args.eval_model:
         epochStart = int(args.eval_model[0])
         epochEnd = int(args.eval_model[1])
