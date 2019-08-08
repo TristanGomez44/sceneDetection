@@ -231,7 +231,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
     else:
         return metricLastVal,outDict,targDict
 
-def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
+def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,vidName):
 
     allOutput = None
     splitSizes = [valLTemp for _ in range(allFeats.size(1)//valLTemp)]
@@ -239,14 +239,13 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
     if allFeats.size(1)%valLTemp > 0:
         splitSizes.append(allFeats.size(1)%valLTemp)
 
-    #chunkList = torch.split(allFeats,split_size_or_sections=splitSizes,dim=1)
-    chunkList = split(allFeats,splitSizes,overlap)
+    chunkList = torch.split(allFeats,split_size_or_sections=splitSizes,dim=1)
 
     sumSize = 0
 
     for i in range(len(chunkList)):
 
-        output = model.computeScore(chunkList[i]).data[:,overlap:chunkList[i].size(1)-overlap]
+        output = model.computeScore(chunkList[i])
 
         if allOutput is None:
             allOutput = output
@@ -256,25 +255,6 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
         sumSize += len(chunkList[i])
 
     return allOutput
-
-def split(allFeat,splitSizes,overlap):
-
-    chunkList = torch.split(allFeat,split_size_or_sections=splitSizes,dim=1)
-
-    cumSize = torch.cumsum(torch.tensor(splitSizes),dim=0)
-    cumSize= torch.cat((torch.tensor([0]),cumSize),dim=0)
-
-    padd = torch.zeros(allFeat.size(0),overlap,allFeat.size(2)).to(allFeat.device)
-    allFeat = torch.cat((padd,allFeat,padd),dim=1)
-
-    offset = overlap
-    overlappedChunks = []
-    for i in range(len(chunkList)):
-
-        overlChunkList = torch.cat((allFeat[:,cumSize[i]:cumSize[i]+overlap],chunkList[i],allFeat[:,cumSize[i+1]+overlap:cumSize[i+1]+2*overlap]),dim=1)
-        overlappedChunks.append(overlChunkList)
-
-    return overlappedChunks
 
 def getWeights(target,classWeight):
     '''
@@ -536,8 +516,7 @@ def addOptimArgs(argreader):
 def addValArgs(argreader):
     argreader.parser.add_argument('--train_step_to_ignore', type=int,metavar='LMAX',
                     help='Number of steps that will be ignored at the begining and at the end of the training sequence for binary cross entropy computation')
-    argreader.parser.add_argument('--val_l_temp_overlap', type=int,metavar='LMAX',
-                    help='Size of the overlap between sequences passed to the CNN temp model')
+
     argreader.parser.add_argument('--val_l_temp', type=int,metavar='LMAX',help='Length of sequences for computation of scores when using a CNN temp model.')
 
     argreader.parser.add_argument('--metric_early_stop', type=str,metavar='METR',

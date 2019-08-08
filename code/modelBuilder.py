@@ -76,6 +76,11 @@ class Discriminator(nn.Module):
     This is a three layer MLP outputing the probability that the input representation
     comes from the target domain or not
 
+    Args:
+    - inFeat (int): the number of feature outputed by the visual model
+    - applyDropout (bool): whether or not to apply dropout on the first two layer of the
+                            distriminator
+
     '''
 
     def __init__(self,inFeat,applyDropout):
@@ -155,6 +160,20 @@ class LSTM_sceneDet(nn.Module):
         return x,(h,c)
 
 class ScoreConv(nn.Module):
+    ''' This is a module that reads the scene change scores just before they are passed to the sigmoid by
+    the temporal model. It apply one or two convolution layers to the signal and uses 1x1 convolution to
+    outputs a transformed signal of the same shape as the input signal.
+
+    It can return this transformed signal and can also returns this transformed signal multiplied
+    by the input, like an attention layer.
+
+    Args:
+    - kerSize (int): the kernel size of the convolution(s)
+    - chan (int): the number of channel when using two convolutions
+    - biLay (bool): whether or not to apply two convolutional layers instead of one
+    - attention (bool): whether or not to multiply the transformed signal by the input before returning it
+
+    '''
 
     def __init__(self,kerSize,chan,biLay,attention=False):
 
@@ -190,11 +209,14 @@ class CNN_sceneDet(nn.Module):
     - pretrained (bool): indicates if the resnet has to be pretrained on imagenet or not.
     - pool (str): the way the feature should be pooled at the end of the processing. Can be 'mean' to simply do an average pooling or 'linear' to use a fully connected layer
     - multiGPU (bool): indicates if the computation should be done on several gpus
-    - dilation (int): the dilation of the convolution
+    - scoreConvWindSize (int): the kernel size of the score convolution (SC) that will be applied (set to 1 to not apply SC at all).
+    - scoreConvChan (int): the number of channel of the SC
+    - scoreConvBiLay (bool): to have two layers in the SC instead of one
+    - scoreConvAtt (bool): to use the SC as an attention layer
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,dilation=1,scoreConvWindSize=1,\
+    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,scoreConvWindSize=1,\
                 scoreConvChan=8,scoreConvBiLay=False,sceneLenCnnPool=0,scoreConvAtt=False):
 
         super(CNN_sceneDet,self).__init__()
@@ -289,13 +311,13 @@ class SceneDet(nn.Module):
     - hiddenSize,layerNb,dropout,bidirect : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
     - cuda (bool): whether or not the computation should be done on gpu
     - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
-    - chanTempMod, pretrTempMod, poolTempMod, dilTempMod: respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
+    - chanTempMod, pretrTempMod, poolTempMod : respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
         model is a resnet.
 
     '''
 
     def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod,dilTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,sceneLenCnnPool,scoreConvAtt):
+                        chanTempMod,pretrTempMod,poolTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,sceneLenCnnPool,scoreConvAtt):
 
         super(SceneDet,self).__init__()
 
@@ -329,7 +351,7 @@ class SceneDet(nn.Module):
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout,bidirect)
         elif self.temp_model.find("net") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,dilation=dilTempMod,scoreConvWindSize=scoreConvWindSize,\
+            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,scoreConvWindSize=scoreConvWindSize,\
                                             scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,sceneLenCnnPool=sceneLenCnnPool,scoreConvAtt=scoreConvAtt)
 
         self.nb_gpus = torch.cuda.device_count()
@@ -396,7 +418,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
                     args.cuda,args.lay_feat_cut,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod,args.dil_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,args.scene_len_cnn_pool,\
+                    args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,args.scene_len_cnn_pool,\
                     args.score_conv_attention)
 
     return net
@@ -450,9 +472,6 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--pretr_temp_mod', type=args.str2bool, metavar='S',
                         help='To have the temporal model pretrained on ImageNet, if it is a CNN')
-
-    argreader.parser.add_argument('--dil_temp_mod', type=int, metavar='S',
-                        help='The dilation of the temporal model convolution if it is a CNN.')
 
     argreader.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
                         help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')

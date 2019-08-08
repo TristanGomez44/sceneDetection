@@ -13,7 +13,7 @@ import utils
 def updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict):
 
     if args.temp_model.find("net") != -1:
-        allOutput = trainVal.computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,args.val_l_temp_overlap,precVidName)
+        allOutput = trainVal.computeScore(model,allOutput,allTarget,args.val_l_temp,args.pool_temp_mod,precVidName)
 
     outDict[precVidName] = allOutput
     targDict[precVidName] = allTarget
