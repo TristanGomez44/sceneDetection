@@ -423,6 +423,13 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
 
             state_dict = {k.replace("module.cnn.","cnn.module.").replace("scoreConv.weight","scoreConv.layers.weight").replace("scoreConv.bias","scoreConv.layers.bias"): v for k,v in params.items()}
 
+            paramToRemove = []
+            for param in state_dict.keys():
+                if param.find("frameAtt") != -1:
+                    paramToRemove.append(param)
+            for param in paramToRemove:
+                state_dict.pop(param)
+
             net.load_state_dict(state_dict)
             startEpoch = utils.findLastNumbers(init_path)
         else:
@@ -433,7 +440,8 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
                 if cuda:
                     params[key] = params[key].cuda()
 
-                net.state_dict()[key].data += params[key].data -net.state_dict()[key].data
+                if key in net.state_dict().keys():
+                    net.state_dict()[key].data += params[key].data -net.state_dict()[key].data
 
                 startEpoch = utils.findLastNumbers(init_path_visual_temp)
 
@@ -682,7 +690,7 @@ def main(argv=None):
         kwargsVal.update({"metricEarlyStop":args.metric_early_stop,"maximiseMetric":args.maximise_metric})
 
         if args.adv_weight > 0:
-            kwargsTr["discrModel"] = modelBuilder.Discriminator(net.nbFeat)
+            kwargsTr["discrModel"] = modelBuilder.Discriminator(net.nbFeat,args.discr_dropout)
             kwargsTr["discrModel"] = kwargsTr["discrModel"].cuda() if args.cuda else kwargsTr["discrModel"].cpu()
             kwargsTr["discrLoader"] = load_data.buildFrameTrainLoader(args)
             kwargsTr["discrOptim"] = torch.optim.SGD(kwargsTr["discrModel"].parameters(), lr=args.lr,momentum=args.momentum)

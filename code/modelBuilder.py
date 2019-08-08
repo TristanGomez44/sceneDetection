@@ -71,8 +71,14 @@ def buildAudioFeatModel(audioFeatModelName):
     return model
 
 class Discriminator(nn.Module):
+    ''' This class defining the discriminator for the adversarial loss term
 
-    def __init__(self,inFeat):
+    This is a three layer MLP outputing the probability that the input representation
+    comes from the target domain or not
+
+    '''
+
+    def __init__(self,inFeat,applyDropout):
 
         super(Discriminator,self).__init__()
 
@@ -82,13 +88,21 @@ class Discriminator(nn.Module):
 
         self.relu = nn.ReLU()
         self.sigmo = nn.Sigmoid()
-        self.dropout = nn.Dropout(p=0.5)
+
+        self.applyDropout = applyDropout
+
+        if self.applyDropout:
+            self.dropout = nn.Dropout(p=0.5)
 
     def forward(self,x):
-
-        x = self.dropout(self.relu(self.lin1(x)))
-        x = self.dropout(self.relu(self.lin2(x)))
-        return self.sigmo(self.lin3(x))
+        if self.applyDropout:
+            x = self.dropout(self.relu(self.lin1(x)))
+            x = self.dropout(self.relu(self.lin2(x)))
+            return self.sigmo(self.lin3(x))
+        else:
+            x = self.relu(self.lin1(x))
+            x = self.relu(self.lin2(x))
+            return self.sigmo(self.lin3(x))
 
 class LSTM_sceneDet(nn.Module):
     ''' A LSTM temporal model
@@ -445,5 +459,8 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--temp_model', type=str,metavar='MODE',
                         help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
+
+    argreader.parser.add_argument('--discr_dropout', type=args.str2bool, metavar='S',
+                        help='To apply dropout on the discriminator (only useful when using adversarial loss term)')
 
     return argreader
