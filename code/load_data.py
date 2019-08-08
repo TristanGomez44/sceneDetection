@@ -25,33 +25,15 @@ class Sampler(torch.utils.data.sampler.Sampler):
     """ The sampler for the SeqTrDataset dataset
     """
 
-    def __init__(self, nb_videos,nbTotalShots,nbShotPerSeq,hmIndList=None,hmProp=0):
+    def __init__(self, nb_videos,nbTotalShots,nbShotPerSeq):
         self.nb_videos = nb_videos
 
         self.length = nbTotalShots//nbShotPerSeq
 
-        self.hmIndList = hmIndList
-        self.hmProp = hmProp
-
     def __iter__(self):
 
         if self.length > 0:
-            if (not self.hmIndList is None) and self.hmProp>0:
-
-                self.hmIndList = torch.tensor(self.hmIndList).long()
-                self.hmIndList = self.hmIndList[torch.randint(int(self.hmProp*len(self.hmIndList)),(int(self.hmProp*self.length),))]
-
-                self.randIndList = torch.randint(self.nb_videos,(int((1-self.hmProp)*self.length),))
-
-                self.indList = torch.cat((self.hmIndList,self.randIndList),dim=0)
-
-                self.indList = self.indList.numpy()
-
-                np.random.shuffle(self.indList)
-
-                return iter(self.indList)
-            else:
-                return iter(torch.randint(self.nb_videos,(self.length,)))
+            return iter(torch.randint(self.nb_videos,(self.length,)))
         else:
             return iter([])
     def __len__(self):
@@ -501,10 +483,7 @@ def getGT(dataset,vidName,annotator=0):
 
 def addArgs(argreader):
 
-    argreader.parser.add_argument('--hm_prop', type=float, metavar='N',
-                        help='Proportion of videos that will be re-used during next epoch for hard-mining.')
-    argreader.parser.add_argument('--epochs_hm', type=int, metavar='N',
-                        help='The number of epochs to wait before updating the hard mined videos')
+
     argreader.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                         help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
                             selects one of the two datasets.')

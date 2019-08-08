@@ -56,8 +56,6 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
     allOut = None
     allGT = None
 
-    hmDict = {}
-
     for batch_idx,(data, audio,target,vidNames) in enumerate(loader):
 
         if target.sum() > 0:
@@ -107,9 +105,6 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
             metrDict["Dist Neg"] += distNeg
             metrDict["DED"] += metrics.computeDED(output.data>0.5,target.long())
 
-            #Store the f score of each example
-            update.updateHMDict(hmDict,cov,overflow,vidNames)
-
             if allOut is None:
                 allOut = output.data
                 allGT = target
@@ -129,10 +124,6 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.model_id, epoch))
         writeSummaries(metrDict,validBatch,writer,epoch,"train",args.model_id,args.exp_id)
 
-    #Compute the mean f-score of the all the videos processed during this training epoch
-    agregateHMDict(hmDict)
-
-    return hmDict
 def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,metricLastVal,maximiseMetric):
     '''
     Validate a model. This function computes several metrics and return the best value found until this point.
@@ -239,11 +230,6 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
 
     else:
         return metricLastVal,outDict,targDict
-
-def agregateHMDict(hmDict):
-
-    for vidName in hmDict.keys():
-        hmDict[vidName] = np.array(hmDict[vidName]).mean()
 
 def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,overlap,vidName):
 
@@ -732,10 +718,7 @@ def main(argv=None):
             kwargsTr = resetAdvIter(kwargsTr)
 
             if not args.no_train:
-                hmDict = trainFunc(**kwargsTr)
-
-                kwargsTr["loader"],kwargsTr = update.updateHardMin(epoch,args.epochs_hm,hmDict,trainDataset,args,kwargsTr,kwargsTr["loader"])
-
+                trainFunc(**kwargsTr)
             else:
                 net.load_state_dict(torch.load("../models/{}/model{}_epoch{}".format(args.no_train[0],args.no_train[1],epoch)))
 

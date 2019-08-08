@@ -9,15 +9,7 @@ import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 from sklearn.metrics import roc_auc_score
 import utils
-def updateHMDict(hmDict,coverage,overflow,vidNames):
 
-    for vidName in vidNames:
-        f_score = 2*coverage*(1-overflow)/(coverage+1-overflow)
-
-        if vidName in hmDict.keys():
-            hmDict[vidName].append(f_score)
-        else:
-            hmDict[vidName] = [f_score]
 def updateMetrics(args,model,allOutput,allTarget,precVidName,nbVideos,metrDict,outDict,targDict):
 
     if args.temp_model.find("net") != -1:
