@@ -31,6 +31,9 @@ def main(argv=None):
 
     argreader.parser.add_argument('--format_youtube',action='store_true',help='For the youtube_large datasets. Put the clips into separate folder')
     argreader.parser.add_argument('--format_bbc',type=str,metavar='EXT',help='Format the bbc dataset. The value is the extension of the video file. E.g : \"--format_bbc mp4\".')
+
+    argreader.parser.add_argument('--detect_shot_bbc',action='store_true',help='To detect BBC shot using ffmpeg and not rely on the shot segmentation provided in the bbc dataset.')
+
     argreader.parser.add_argument('--format_bbc2',nargs=2,type=str,metavar='EXT',help='Format the bbc season 2 dataset. As there is no annotation, artificial annotation are built.\
                                                                                        The first value is the extension of the video file. E.g : \"--format_bbc2 mp4\". The second value\
                                                                                        is the average length of the scene desired in number of shots.')
@@ -197,29 +200,34 @@ def main(argv=None):
             extractAudio(newPath)
 
             if not os.path.exists(videoFold+"/result.csv"):
-                #Extract shots
-                rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
-                shotCSV = removeHoles(rawShotCSV)
                 nbFrames = getNbFrames(newPath)
+
+                #Extract shots
+                if args.detect_shot_bbc:
+                    fps = utils.getVideoFPS(newPath)
+                    shotCSV = detect_format_shots(newPath,args.shot_thres,nbFrames,fps)
+                else:
+                    rawShotCSV = np.genfromtxt(rawshotFilePaths[i])
+                    shotCSV = removeHoles(rawShotCSV)
+
                 shotCSV[-1,1] = nbFrames-1
 
                 np.savetxt(videoFold+"/result.csv",shotCSV)
             else:
                 shotCSV = np.genfromtxt(videoFold+"/result.csv")
 
-            #Extract scenes:
-            starts = np.genfromtxt(rawSceneFilePaths[i],delimiter=",")[:-1]
-            print(starts)
+            if not os.path.exists("../data/bbc/annotations/{}_scenes.txt".format(vidName)):
 
-            shotNb = len(shotCSV)
-            ends = np.concatenate((starts[1:]-1,[shotNb-1]),axis=0)
-            starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
-            #The scene boundaries expressed with shot index
-            scenesS = np.concatenate((starts,ends),axis=1)
-            #The scene boundaries expressed with frame index
-            scenesF = processResults.shots_to_frames("../data/bbc/{}/result.xml".format(vidName),scenesS)
-
-            np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
+                #Extract scenes:
+                starts = np.genfromtxt(rawSceneFilePaths[i],delimiter=",")[:-1]
+                shotNb = len(shotCSV)
+                ends = np.concatenate((starts[1:]-1,[shotNb-1]),axis=0)
+                starts,ends = starts[:,np.newaxis],ends[:,np.newaxis]
+                #The scene boundaries expressed with shot index
+                scenesS = np.concatenate((starts,ends),axis=1)
+                #The scene boundaries expressed with frame index
+                scenesF = utils.shots_to_frames("../data/bbc/{}/result.csv".format(vidName),scenesS)
+                np.savetxt("../data/bbc/annotations/{}_scenes.txt".format(vidName),scenesF)
 
     if args.format_bbc2:
 
@@ -273,7 +281,7 @@ def main(argv=None):
             #The scene boundaries expressed with shot index
             scenesS = np.concatenate((starts,ends),axis=1)
             #The scene boundaries expressed with frame index
-            scenesF = processResults.shots_to_frames("../data/bbc2/{}/result.xml".format(vidName),scenesS)
+            scenesF = utils.shots_to_frames("../data/bbc2/{}/result.csv".format(vidName),scenesS)
 
             np.savetxt("../data/bbc2/annotations/{}_scenes.txt".format(vidName),scenesF)
 
@@ -296,7 +304,7 @@ def main(argv=None):
             #Removing holes in scenes segmentation
             rawSceneCSV = np.genfromtxt(rawSceneFilePaths[i])
             sceneCSV = removeHoles(rawSceneCSV)
-            sceneCSV[-1,1] = frameNb
+            sceneCSV[-1,1] = frameNb-1
             np.savetxt(rawSceneFilePaths[i],sceneCSV)
 
             #Extract shots
@@ -304,6 +312,10 @@ def main(argv=None):
                 shotBoundsFrame = detect_format_shots(path,args.shot_thres,frameNb,fps)
                 if not os.path.exists("../data/OVSD/{}/".format(vidName)):
                     os.makedirs("../data/OVSD/{}/".format(vidName))
+                np.savetxt("../data/OVSD/{}/result.csv".format(vidName),shotBoundsFrame)
+            else:
+                shotBoundsFrame = np.genfromtxt("../data/OVSD/{}/result.csv".format(vidName))
+                shotBoundsFrame[-1,1] = frameNb-1
                 np.savetxt("../data/OVSD/{}/result.csv".format(vidName),shotBoundsFrame)
 
     if args.format_ally_mcbeal:
@@ -377,8 +389,8 @@ def main(argv=None):
 
 def removeBadShotVideos(dataset,vidName):
     #Remove the videos which shot detection is bad i.e. video with a detected shot number inferior to their scene number (there's only a few videos in this case)
-    resPath = "../data/{}/{}/result.xml".format(dataset,vidName)
-    res = utils.xmlToArray(resPath)
+    resPath = "../data/{}/{}/result.csv".format(dataset,vidName)
+    res = np.genfromtxt(resPath)
 
     if res.shape[0] < len(glob.glob(os.path.dirname(resPath)+"/*.mp4")) or len(res.shape) == 1:
 
