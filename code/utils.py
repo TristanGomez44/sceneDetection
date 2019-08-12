@@ -46,10 +46,13 @@ def framesToShot(scenesBounds,shotBounds):
 
     return gt
 
-def shots_to_frames(pathToXml,scenesS):
+def shots_to_frames(shotFPath,scenesS):
     ''' Computes scene boundaries file with frame index instead of shot index '''
 
-    shotsF = xmlToArray(pathToXml)
+    shotsF = np.genfromtxt(shotFPath)
+
+    print(shotsF)
+    print("scenes",scenesS)
 
     scenes_startF = shotsF[:,0][scenesS[:,0].astype(int)]
     scenes_endF = shotsF[:,1][scenesS[:,1].astype(int)]
@@ -57,30 +60,6 @@ def shots_to_frames(pathToXml,scenesS):
     scenesF = np.concatenate((scenes_startF[:,np.newaxis],scenes_endF[:,np.newaxis]),axis=1)
 
     return scenesF
-
-def xmlToArray(xmlPath):
-    ''' Read the shot segmentation for a video
-
-    If the shot segmentation does not exist in .xml at the path indicated, \
-    this function look for the segmentation in csv file, in the same folder.
-
-     '''
-
-    if os.path.exists(xmlPath):
-        #Getting the shot bounds with frame number
-        tree = ET.parse(xmlPath).getroot()
-        shotsF = tree.find("content").find("body").find("shots")
-        frameNb = int(shotsF[-1].get("fduration"))+int(shotsF[-1].get("fbegin"))
-
-        shotsF = list(map(lambda x:int(x.get("fbegin")),shotsF))
-        shotsF.append(frameNb)
-
-        shotsF = np.array(shotsF)
-        shotsF = np.concatenate((shotsF[:-1,np.newaxis],shotsF[1:,np.newaxis]-1),axis=1)
-
-        return shotsF
-    else:
-        return np.genfromtxt(xmlPath.replace(".xml",".csv"))
 
 def getPath(annotFold,modelExpId,modelId,modelEpoch,epiInd,epiNames,annotationInd,annotatorNb):
 
