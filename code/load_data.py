@@ -110,7 +110,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         else:
             for videoPath in self.videoPaths:
                 videoFold = os.path.splitext(videoPath)[0]
-                self.nbShots += len(utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+                self.nbShots += len(np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,os.path.basename(videoFold))))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -136,7 +136,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         fps = utils.getVideoFPS(self.videoPaths[vidInd])
 
-        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
+        shotBounds = np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName))
         shotInds = np.arange(len(shotBounds))
 
         #Computes the scene number of each shot
@@ -196,7 +196,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         frameInds = torch.distributions.uniform.Uniform(shotBounds[:,0], shotBounds[:,1]+1).sample((1,))
 
         #Clamp the maximal value to the last frame index
-        lastFrameInd = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max()
+        lastFrameInd = np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName)).max()
         frameInds = torch.clamp(frameInds,0,lastFrameInd).long()
         frameInds = frameInds.transpose(dim0=0,dim1=1)
         frameInds = frameInds.contiguous().view(-1)
@@ -212,7 +212,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
-            print(vidName,frameInds.max(),utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max(),gt.max())
+            print(vidName,frameInds.max(),np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName)).max(),gt.max())
             sys.exit(0)
 
         if self.audioLen > 0:
@@ -252,7 +252,7 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         else:
             for videoPath in self.videoPaths:
                 videoFold = os.path.splitext(videoPath)[0]
-                self.nbShots += len(utils.xmlToArray("{}/result.xml".format(videoFold)))
+                self.nbShots += len(np.genfromtxt("{}/result.csv".format(videoFold)))
 
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         if not resizeImage:
@@ -274,7 +274,7 @@ class VideoFrameDataset(torch.utils.data.Dataset):
 
         fps = self.FPSDict[self.videoPaths[vidInd]]
 
-        shotBounds = utils.xmlToArray("{}/result.xml".format(vidFold))
+        shotBounds = np.genfromtxt("{}/result.csv".format(vidFold))
         shotInd = np.random.randint(len(shotBounds))
 
         #Selecting frame indexes
@@ -323,7 +323,7 @@ class TestLoader():
         self.nbShots =0
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
-            self.nbShots += len(utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,os.path.basename(videoFold))))
+            self.nbShots += len(np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,os.path.basename(videoFold))))
 
     def __iter__(self):
         self.videoInd = 0
@@ -346,7 +346,7 @@ class TestLoader():
 
         fps = utils.getVideoFPS(videoPath)
 
-        shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName))
+        shotBounds = np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName))
         shotInds =  np.arange(self.shotInd,min(self.shotInd+L,len(shotBounds)))
 
         if not self.randomFrame:
@@ -363,7 +363,7 @@ class TestLoader():
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
-            print(vidName,"max frame",frameInds.max(),utils.xmlToArray("../data/{}/{}/result.xml".format(self.dataset,vidName)).max())
+            print(vidName,"max frame",frameInds.max(),np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName)).max())
             sys.exit(0)
 
         if self.audioLen > 0:
@@ -445,7 +445,7 @@ def readAudio(audioData,i,fps,fs,audio_len):
 
     return fullArray
 
-def getGT(dataset,vidName,annotator=0):
+def getGT(dataset,vidName,relativeToFrame=False):
     ''' For one video, returns a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
 
     This function computes the 0,1 list and save if it does not already exists.
@@ -453,40 +453,42 @@ def getGT(dataset,vidName,annotator=0):
     Args:
     - dataset (str): the dataset name
     - vidName (str): the video name. It is the name of the videol file minux the extension.
-    - annotator (int): the number of the annotator desired. This arg should not be used except for the bbc dataset \
-                        where there is several annotator.
     Returns:
     - gt (array): a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
 
     '''
 
-    if annotator == 0:
+    if not relativeToFrame:
         if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
 
-            shotBounds = utils.xmlToArray("../data/{}/{}/result.xml".format(dataset,vidName))
+            shotBounds = np.genfromtxt("../data/{}/{}/result.csv".format(dataset,vidName))
 
             scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
             gt = utils.framesToShot(scenesBounds,shotBounds)
             np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
         else:
             gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
+
+        return gt.astype(int)
+
     else:
-        if dataset != "bbc":
-            raise ValueError("Only the dataset 'bbc' has several annotators.")
 
-        pathToAnnot = sorted(glob.glob("../data/PlanetEarth/annotations/scenes/annotator{}/*.txt".format(annotator)),key=utils.findNumbers)[videoName]
-        sceneChangeInd = np.genfromtxt(pathToAnnot,delimiter=",")
-        gt = np.zeros(sceneChangeInd.max())
-        gt[sceneChangeInd[1:-1]] = 1
+        scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName)).astype(int)
+        lastFrameInd = scenesBounds[-1,1]
 
-    return gt.astype(int)
+        gtFrame = np.zeros(lastFrameInd+1)
+
+        gtFrame[scenesBounds[:,0]] = 1
+        gtFrame[0] = 0
+
+        return gtFrame.astype(int)
 
 def addArgs(argreader):
 
 
     argreader.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
-                        help='The network producing the features can be either pretrained on \'imageNet\' or \'places365\'. This argument \
-                            selects one of the two datasets.')
+                        help='The network producing the features can only be pretrained on \'imageNet\'. This argument must be \
+                            set to \'imageNet\' datasets.')
     argreader.parser.add_argument('--batch_size', type=int,metavar='BS',
                         help='The batchsize to use for training')
     argreader.parser.add_argument('--val_batch_size', type=int,metavar='BS',
