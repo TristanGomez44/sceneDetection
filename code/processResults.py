@@ -49,9 +49,11 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
         videoName = videoNameDict[path]
 
         metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score",lenPond,relativeToFrame)
-        metEval["F-score New"][j],metDef["F-score New"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score New",lenPond,relativeToFrame)
-        metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU",lenPond,relativeToFrame)
-        metEval["DED"][j],metDef["DED"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED",lenPond,relativeToFrame)
+
+        if not relativeToFrame:
+            metEval["F-score New"][j],metDef["F-score New"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score New",lenPond)
+            metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU",lenPond)
+            metEval["DED"][j],metDef["DED"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED",lenPond)
 
     printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
 
@@ -66,7 +68,7 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
     print("Best F-score : ",str(round(metEval["F-score"].mean(),2)),"Default F-score :",str(round(metDef["F-score"].mean(),2)),\
           "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
 
-def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond,relativeToFrame):
+def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond,relativeToFrame=False):
     _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,relativeToFrame=relativeToFrame)
 
     gt = load_data.getGT(dataset_test,videoName,relativeToFrame).astype(int)
