@@ -3,7 +3,6 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn import DataParallel
 import resnet
-import densenet
 import vggish
 
 import args
@@ -230,8 +229,6 @@ class CNN_sceneDet(nn.Module):
         elif modelType == "resnet18":
             self.cnn = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
             expansion = 1
-        elif modelType == "densenet121":
-            self.cnn = densenet.densenet121(poolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,inChan=3)
         else:
             raise ValueError("Unkown model type for CNN temporal model : ",modelType)
 
@@ -380,12 +377,14 @@ class SceneDet(nn.Module):
 
         x = x.contiguous().view(x.size(0)*x.size(1),x.size(2),x.size(3),x.size(4))
 
+        #Computing features
         x = self.featModel(x)
 
         if not self.audioFeatModel is None:
             audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
-            audio = self.audioFeatModel(audio)
 
+            #Adding the audio features
+            audio = self.audioFeatModel(audio)
             x = torch.cat((x,audio),dim=-1)
 
         #Unflattening
