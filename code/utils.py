@@ -3,6 +3,7 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import os
 import processResults
+import subprocess
 
 def binaryToSceneBounds(scenesBinary):
     ''' Convert a list indicating for each shot if it is the first shot of a new scene or not \
@@ -96,7 +97,15 @@ def toBinary(segmPath,shotNb,**kwargs):
 def getVideoFPS(videoPath):
     ''' Get the number of frame per sencond of a video.'''
 
-    return float(pims.Video(videoPath)._frame_rate)
+    pimsVid = pims.Video(videoPath)
+
+    if hasattr(pimsVid,"_frame_rate"):
+        return float(pims.Video(videoPath)._frame_rate)
+    else:
+        res = subprocess.check_output("ffprobe -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate {}".format(videoPath),shell=True)
+        res = str(res)[:str(res).find("\\n")].replace("'","").replace("b","").split("/")
+        fps = int(res[0])/int(res[1])
+        return fps
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
