@@ -153,7 +153,7 @@ def main(argv=None):
 
             #Concatenate all the videos and build the ground truth file
             if (not os.path.exists(catVidPath.replace("_tmp",""))) or args.compute_only_gt:
-                processVideo(catVidPath,videoFoldPath,args.merge_videos,args.compute_only_gt,args.dataset)
+                processVideo(catVidPath,videoFoldPath,args.merge_videos,args.compute_only_gt,args.dataset,vidExt=args.merge_videos)
 
             nbFrames = getNbFrames(catVidPath.replace("_tmp",""))
             fps = utils.getVideoFPS(catVidPath.replace("_tmp",""))
@@ -359,7 +359,7 @@ def main(argv=None):
             print(videoPath,rawAnnotationFilePaths[i])
 
             vidName = i
-            newVideoPath = "../data/rai/{}.{}".format(vidName,args.format_rai)
+            newVideoPath = "../data/rai/{}.mp4".format(vidName)
             videoFold = os.path.splitext(newVideoPath)[0]
 
             #Copy video
@@ -400,7 +400,7 @@ def removeBadShotVideos(dataset,vidName):
         shutil.move(os.path.dirname(resPath),"../data/youtBadShotDet/")
         shutil.move(os.path.dirname(resPath)+".mp4","../data/youtBadShotDet/")
 
-def processVideo(catVidPath,videoFoldPath,videoExtension,compute_only_gt,dataset):
+def processVideo(catVidPath,videoFoldPath,videoExtension,compute_only_gt,dataset,vidExt):
 
     gt = []
     startFr = -1
@@ -412,7 +412,7 @@ def processVideo(catVidPath,videoFoldPath,videoExtension,compute_only_gt,dataset
 
     totalFrameNb = 0
     for k,videoPath in enumerate(clips):
-        totalFrameNb,fileToCat = processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt)
+        totalFrameNb,fileToCat = processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt,vidExt)
 
     if not compute_only_gt:
         with open(videoFoldPath+"/fileToCat.txt","w") as text_file:
@@ -432,17 +432,18 @@ def processVideo(catVidPath,videoFoldPath,videoExtension,compute_only_gt,dataset
     gt[-1,1] = getNbFrames(catVidPath.replace("_tmp",""))-1
     np.savetxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName),gt)
 
-def processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt):
+def processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt,vidExt):
 
     print("\t",videoPath)
 
     #Getting the number of frames of the video
     nbFrames = getNbFrames(videoPath)
-    fps = utils.getVideoFPS(videoPath)
 
     if dataset == "youtube_large":
+        fps = utils.getVideoFPS(videoPath)
         stopFrame = nbFrames-32*fps
     elif dataset == "bbcEarth":
+        fps = utils.getVideoFPS(videoPath)
         stopFrame = nbFrames-20*fps
     else:
         stopFrame = nbFrames
@@ -453,18 +454,17 @@ def processScene(videoPath,dataset,totalFrameNb,compute_only_gt,fileToCat,gt):
     if not compute_only_gt:
         if dataset == "youtube_large":
             #Remove the end landmark with ffpmeg
-            subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
-            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
+            subprocess.call("ffmpeg -v error -y -i {} -t {} -vcodec copy -acodec copy {}".format(videoPath,stopFrame/fps,videoPath.replace("."+vidExt,"_cut."+vidExt)),shell=True)
+            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace("."+vidExt,"_cut."+vidExt)))
         elif dataset == "bbcEarth":
 
             if fps == 25:
-                subprocess.call("ffmpeg -v error -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
+                subprocess.call("ffmpeg -v error -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace("."+vidExt,"_cut."+vidExt)),shell=True)
             else:
-                subprocess.call("ffmpeg -v error -r 25 -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace(".mp4","_cut.mp4")),shell=True)
-
-            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace(".mp4","_cut.mp4")))
+                subprocess.call("ffmpeg -v error -r 25 -y -i {} -t {} -vf scale=634:360 -an {}".format(videoPath,stopFrame/fps,videoPath.replace("."+vidExt,"_cut."+vidExt)),shell=True)
+            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath.replace("."+vidExt,"_cut."+vidExt)))
         else:
-            raise ValueError("Unkown dataset to use with --merge_videos : {}".format(dataset))
+            fileToCat += "file \'{}\'\n".format(os.path.basename(videoPath))
 
     return totalFrameNb,fileToCat
 
@@ -492,8 +492,12 @@ def tripletToInterv(h5FilePath,segKey,fps,frameNb,savePath):
 
 def getNbFrames(path):
     pimsVid = pims.Video(path)
-    fps = float(pimsVid._frame_rate)
-    nbFrames = int(float(pimsVid._duration)*fps)
+
+    if hasattr(pimsVid,"_frame_rate"):
+        fps = float(pimsVid._frame_rate)
+        nbFrames = int(float(pimsVid._duration)*fps)
+    else:
+        nbFrames = int(pimsVid._len)
     return nbFrames
 
 def generateRandomScenes(shotNb,mean,var=0.5):
