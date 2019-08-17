@@ -24,6 +24,27 @@ import metrics
 import utils
 
 def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres,lenPond,relativeToFrame):
+    '''
+    Evaluate a model. It requires the scores for each video to have been computed already with the trainVal.py script. Check readme to
+    see how to compute the scores for each video.
+
+    It computes the performance of a model using the default decision threshold (0.5) and the best decision threshold.
+
+    The best threshold is computed for each video by looking for the best threshold on all the other videos. The best threshold is also
+    computed for each metric.
+
+    To find the best threshold, a range of threshold are evaluated and the best is selected.
+
+    Args:
+    - exp_id (str): the name of the experience
+    - model_id (str): the id of the model to evaluate. Eg : "res50_res50_youtLarg"
+    - model_name (str): the label of the model. It will be used to identify the model in the result table. Eg. : 'Res50-Res50 (Youtube-large)'
+    - dataset_test (str): the dataset to evaluate
+    - epoch (int): the epoch at which to evaluate
+    - firstThres (float): the lower bound of the threshold range to evaluate
+    - lastThres (float): the upper bound of the threshold range to evaluate
+    '''
+
 
     resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,epoch)),key=utils.findNumbers))
     videoNameDict = buildVideoNameDict(dataset_test,0,1,resFilePaths)
@@ -505,16 +526,11 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--frame',action='store_true',help='To compute the metrics at the frame level.')
-
-    argreader.parser.add_argument('--metric',type=str,default="IoU",metavar='METRIC',help='The metric to use. Can only be \'IoU\' for now.')
-
+    ########### PLOT TSNE ################
     argreader.parser.add_argument('--tsne',action='store_true',help='To plot t-sne representation of feature extracted. Also plots the representation of a video side by side to make an image. \
                                     The --exp_id, --model_id, --seed and --dataset_test arguments should be set.')
 
-    argreader.parser.add_argument('--plot_cat_repr',type=str,help=' The value must a path to a folder containing representations vector as CSV files.')
-    argreader.parser.add_argument('--conv_sco_plot',type=str,help='To plot the frequency response of the 1D filter learned by a model filtering its scores. The value is the path to the weight file.')
-
+    ########### PLOT SCORE EVOLUTION ALONG VIDEO ##################
     argreader.parser.add_argument('--plot_score',action="store_true",help='To plot the scene change probability of produced by a model for all the videos processed by this model during validation for all epochs.\
                                                                             The --model_id argument must be set, along with the --exp_id, --dataset_test and --epoch_to_plot arguments.')
 
@@ -524,11 +540,7 @@ def main(argv=None):
                                                                                         The values are the exp_id and the model_id of the model not trained on scene change detection (i.e. the model with the ImageNet weights)')
     argreader.parser.add_argument('--plot_dist',action="store_true",help='To plot the distance when using the --plot_score argument')
 
-    argreader.parser.add_argument('--eval_model',type=float,nargs=4,help='To evaluate a model and plot the mean metrics as a function of the score threshold.\
-                                    The --model_id argument must be set, along with the --exp_id, --dataset_test, --test_part_beg  and --test_part_end arguments. \
-                                    The values of this args are the epochs at which to start and end the plot, followed by the minimum and maximum decision threshold \
-                                    to evaluate.')
-
+    ########## COMPUTE METRICS AND PUT THEM IN AN LATEX TABLE #############
     argreader.parser.add_argument('--eval_model_leave_one_out',type=float,nargs=3,help='To evaluate a model by tuning its decision threshold on the video on which it is not\
                                     evaluated. The --model_id argument must be set, along with the --model_name, --exp_id and --dataset_test arguments. \
                                     The values of this args are the epoch at which to evaluate , followed by the minimum and maximum decision threshold \
@@ -540,13 +552,6 @@ def main(argv=None):
 
     argreader.parser.add_argument('--fine_tuned_thres',action="store_true",help='To automatically fine tune the decision threshold of the model. Only useful for the --bbc_annot_dist arg. \
                                                                                 Check the help of this arg.')
-
-
-    argreader.parser.add_argument('--exp_id_list',type=str,nargs="*",help='The list of model experience ids (useful for the --results_table argument')
-    argreader.parser.add_argument('--model_id_list',type=str,nargs="*",help='The list of model ids (useful for the --results_table argument')
-    argreader.parser.add_argument('--thres_list',type=float,nargs="*",help='The list of decision threshold (useful for the --results_table argument')
-    argreader.parser.add_argument('--epoch_list',type=int,nargs="*",help='The list of epoch at which is model is evaluated (useful for the --results_table argument and for --bbc_annot_dist.')
-
     argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
@@ -557,18 +562,8 @@ def main(argv=None):
 
     if args.tsne:
         tsne(args.dataset_test,args.exp_id,args.model_id,args.seed)
-    if args.plot_cat_repr:
-        plotCatRepr(args.plot_cat_repr)
-    if args.conv_sco_plot:
-        convScoPlot(args.conv_sco_plot)
     if args.plot_score:
         plotScore(args.exp_id,args.model_id,args.untrained_exp_and_model_id[0],args.untrained_exp_and_model_id[1],args.dataset_test,args.plot_dist,args.epoch_to_plot)
-    if args.eval_model:
-        epochStart = int(args.eval_model[0])
-        epochEnd = int(args.eval_model[1])
-        thresMin = args.eval_model[2]
-        thresMax = args.eval_model[3]
-        evalModel(args.exp_id,args.model_id,args.dataset_test,args.test_part_beg,args.test_part_end,epochStart,epochEnd,thresMin,thresMax)
     if args.eval_model_leave_one_out:
         epoch = int(args.eval_model_leave_one_out[0])
         thresMin = args.eval_model_leave_one_out[1]
