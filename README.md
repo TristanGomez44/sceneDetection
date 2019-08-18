@@ -4,60 +4,46 @@ This repo contains python scripts to train and evaluate a visio-temporal CNN to 
 
 ## Instalation
 
-First clone this git. Then install conda and the dependencies with the following command :
+First clone this git. Then install conda. Go to the root of the project and install the dependencies with the following command :
 
 ```
-conda env create -f environment.yml
+conda env create -f ./environment.yml
 ```
 
 ### Data bases :
 
-The datasets should be folders in the "data" folder. When you want to use a dataset, create a folder and put the dataset in it.
+Here is how to get and format the different dataset I used to train (Youtube-large, Hollywood2) and to evaluate the models (BBC PlanetEarth, OVSD, RAI dataset, Ally McBeal dataset).
+
+Before any thing : create a folder "data" at the root of the project and set the working directory to "code".
+
+This datasets are sometimes big, so expect a long download time (it took me two or three days to download the 25k videos from youtube).
 
 #### HollyWood2 :
 
-Go to the following link : https://www.di.ens.fr/~laptev/actions/hollywood2/ and download the scenes : Scene samples (25Gb) in a folder called "Holly2" in the folder "data".
-Untar the dowloaded videos and put the video files in the Holly2 folder.
-Group the videos coming from the same movie in separate folders. This an operation you have to do at hand (There is a thousand videos but they are numbered by movie : the videos 1 to x come from the movie A, the video x+1 to y come from the movie B, etc.)
-Use the script formatData.py pour merge the videos, extract the audio and create the annotations :
+Run the script :
 
 ```
-python formatData.py --dataset Holly2 --merge_videos avi
+./formatHolly2.sh
 ```
 
-The value of the --merge_videos argument is "avi" because the videos of this dataset are in the avi format. This operation should take some time. The dataset is ready when it is done !
+This script downloads the videos and format them so they can directly be used for training or evaluation after. To know more, I have
+put comments in the script.
 
 #### Youtube Large
 
-Dowload the videos with youtube-dl in a folder called "youtube" in the "data" folder :
+Run the script :
 
 ```
-youtube-dl -f 18 -ciw -o "%(title)s.%(ext)s" -v https://www.youtube.com/user/movieclips/
+./formatYoutube.sh
 ```
 
-The -f 18 argument download the video in a 640x360 mp4 format.
+Same thing here : it downloads the videos and format them so they can directly be used. There is also comments in the script.
 
-Once the dataset is downloaded, group the videos by movies with the formatData.py script :
-
-```
-python formatData.py --dataset youtube_large --format_youtube
-```
-
-Then, merge the videos, extract the sound and create the annotations with the same script, different arguments :
-
-```
-python formatData.py --dataset youtube_large --merge_videos mp4 --write-description
-```
-
-The --write-description also download the descriptions of the videos, necessary to find from which movie every video comes from.
-
-There is 2000 movies and 25 000 clips, so this should take a while (several days...).
-
-The format of the description varies from one video to another so there are some video (aproximately 200) that are just rejected by
-the algorithm and put in a folder "nodescr_youtube_large" in the "data" folder. The description are also put in a folder "descr_youtube_large",
-alors in the "data" folder.
 
 ### OVSD
+
+For this dataset, things are not fully automatic because there are several links to download each video on the IBM website, but many of them are dead. So, for each video,
+you may have to try several links.
 
 The links to download each video from the OVSD dataset can be found on the IBM website : http://www.research.ibm.com/haifa/projects/imt/video/Video_DataSetTable.shtml
 
@@ -88,14 +74,17 @@ You cannot use the "--shot_thres" argument because the shots are pre-segmented.
 
 ### RAI Dataset
 
-First download the videos and the annotations with this link : "http://imagelab.ing.unimore.it/files/RaiSceneDetection.zip". Extract the folder in the archive
-and put it in the "data" folder. Then run :
+Use the script :
 
 ```
-python formatData.py --format_rai
+./formatRAI.sh
 ```
 
-You can use the "--shot_thres" because the shots are not pre-segmented.
+You can modify the last command of this script to change the shot detection threshold like this :
+
+```
+python formatData.py --format_rai --shot_thres 0.6
+```
 
 ### AllyMcBeal
 
@@ -298,7 +287,7 @@ The script to train the models presented in the results section of the paper is 
 - the length of the validation sequence. The validation sequences can be very long (some movie can contain several hundred shots) so they are split into chunks. The temporal model (LSTM or ResNet) reads one chunk at a time and its prediction made on one chunk are totally independant of the ones made on another chunk.
 
 
-If you don't want to train the models presented in the paper yourself, you can simply download the weights here : https://drive.google.com/drive/folders/1ykREuiirpkm2LTWEjwqZuEihON8sx5Hx?usp=sharing . Put the weight files containing "yout" in their name in a folder called "youtLarg" and the weight files containing "holly2" in a folder "holly2". Put "holly2" and "youtLarg" both in the "models" folder.
+If you don't want to train the models presented in the paper yourself, you can simply download the weights here : https://drive.google.com/drive/folders/1ykREuiirpkm2LTWEjwqZuEihON8sx5Hx?usp=sharing . The weight files are the 8 files that start with "model". Put the weight files containing "yout" in their name in a folder called "youtLarg" and the weight files containing "holly2" in a folder "holly2". Put "holly2" and "youtLarg" both in the "models" folder.
 
 After that, go to next step.
 
@@ -310,7 +299,7 @@ Then, you can evaluate them with the scripts "allRes.sh" that takes two argument
 ./allRes.sh evalOVSD OVSD
 ```
 
-If you don't want to evaluate the models yourself, the csv files containing the scores given by the models to each videos of each dataset are already in the repo ("results/DatasetName/modelId_epochX_VideoName.csv"). You can directly go to next step.
+If you don't want to evaluate the models yourself, the csv files containing the scores given by the models to each videos of each dataset are also here https://drive.google.com/drive/folders/1ykREuiirpkm2LTWEjwqZuEihON8sx5Hx?usp=sharing . Download the four folders and put them in the "results" folder. You can now go to the final step.
 
 ### Compute the metrics
 
