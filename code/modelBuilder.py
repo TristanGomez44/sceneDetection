@@ -7,46 +7,17 @@ import vggish
 
 import args
 
-def buildFeatModel(featModelName,pretrainDataSet,layFeatCut=4):
+def buildFeatModel(featModelName):
     ''' Build a visual feature model
 
     Args:
-    - featModelName (str): the name of the architecture. Can be resnet50, resnet101 or googLeNet
-    - pretrainDataSet (str): the dataset on which the architecture should be pretrained. Can be imageNet, places365 or ADE20K depending on the architecture.\
-            See code below to check on which pretrain dataset each architecture is available
-    - layFeatCut (str): The layer at which to extract the features (ignored if the architecture is not a resnet one.)
-
+    - featModelName (str): the name of the architecture. Can be resnet50, resnet101
     Returns:
     - featModel (nn.Module): the visual feature extractor
 
     '''
 
-    if featModelName == "resnet50":
-
-        if pretrainDataSet == "imageNet":
-            featModel = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut)
-            featModel.load_state_dict(torch.load("../models/resnet50_imageNet.pth"))
-        else:
-            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
-
-    elif featModelName == "resnet101":
-
-        if pretrainDataSet == "imageNet":
-            featModel = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut)
-            featModel.load_state_dict(torch.load("../models/resnet101_imageNet.pth"))
-        else:
-            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
-
-    elif featModelName == "resnet18":
-
-        if pretrainDataSet == "imageNet":
-            featModel = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut)
-            featModel.load_state_dict(torch.load("../models/resnet18_imageNet.pth"))
-        else:
-            raise ValueError("Unknown pretrain dataset for model {} : {}".format(featModelName,pretrainDataSet))
-
-    else:
-        raise ValueError("Unkown model name : {}".format(featModelName))
+    featModel = getattr(resnet,featModelName)(pretrained=True)
 
     return featModel
 
@@ -118,16 +89,15 @@ class LSTM_sceneDet(nn.Module):
     - hiddenSize (int): the size of the hidden state
     - layerNb (int): the number of layers. Each layer is one LSTM stacked upon the preceding LSTMs.
     - dropout (float): the dropout amount in the layers of the LSTM, except the last one
-    - bidirect (bool): a boolean to indicate if the LSTM is bi-bidirectional or not
 
     '''
 
-    def __init__(self,nbFeat,hiddenSize,layerNb,dropout,bidirect):
+    def __init__(self,nbFeat,hiddenSize,layerNb,dropout):
 
         super(LSTM_sceneDet,self).__init__()
 
-        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=bidirect)
-        self.dense = nn.Linear(hiddenSize*(bidirect+1),1024)
+        self.rnn = nn.LSTM(input_size=nbFeat,hidden_size=hiddenSize,num_layers=layerNb,batch_first=True,dropout=dropout,bidirectional=True)
+        self.dense = nn.Linear(hiddenSize*2,1024)
         self.final = nn.Linear(1024,1)
         self.relu = nn.ReLU()
 
@@ -202,7 +172,6 @@ class CNN_sceneDet(nn.Module):
     This is based on a resnet architecture
 
     Args:
-    - layFeatCut (int): the layer at which the feature from the resnet should be extracted
     - modelType (str): the name of the resnet architecture to use
     - chan (int): the number of channel of the first layer of the architecture. The channel numbers in the following layers are based on this value also
     - pretrained (bool): indicates if the resnet has to be pretrained on imagenet or not.
@@ -215,38 +184,20 @@ class CNN_sceneDet(nn.Module):
 
     '''
 
-    def __init__(self,layFeatCut,modelType,chan=64,pretrained=True,pool="mean",multiGPU=False,scoreConvWindSize=1,\
-                scoreConvChan=8,scoreConvBiLay=False,sceneLenCnnPool=0,scoreConvAtt=False):
+    def __init__(self,modelType,pool="mean",multiGPU=False,scoreConvWindSize=1,\
+                scoreConvChan=8,scoreConvBiLay=False,scoreConvAtt=False):
 
         super(CNN_sceneDet,self).__init__()
 
-        if modelType == "resnet50":
-            self.cnn = resnet.resnet50(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
+        if modelType == "resnet50" or modelType == "resnet101" or modelType == "resnet152":
             expansion = 4
-        elif modelType == "resnet101":
-            self.cnn = resnet.resnet101(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
-            expansion = 4
-        elif modelType == "resnet18":
-            self.cnn = resnet.resnet18(pretrained=False,layFeatCut=layFeatCut,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,chan=chan,inChan=3)
-            expansion = 1
         else:
-            raise ValueError("Unkown model type for CNN temporal model : ",modelType)
+            expansion = 1
+
+        self.cnn = getattr(resnet,modelType)(pretrained=True)
 
         if multiGPU:
             self.cnn = DataParallel(self.cnn,dim=0)
-
-        if pretrained:
-            if chan != 64:
-                raise ValueError("To load the pretrained weights, the CNN temp model should have 64 channels and not {}".format(chan))
-
-            checkpoint = torch.load("../models/{}_imageNet.pth".format(modelType))
-
-            if modelType.find("densenet") != -1:
-                state_dict = {"module."+k: v for k,v in checkpoint.items()}
-                densenet._load_state_dict(self.cnn,state_dict)
-            else:
-                state_dict = {"module."+k: v for k,v in checkpoint.items()}
-                self.cnn.load_state_dict(state_dict)
 
         self.pool = pool
         self.featNb = 2048
@@ -254,7 +205,6 @@ class CNN_sceneDet(nn.Module):
         self.attSize = 1024
         self.layNb = 2
         self.dropout = 0
-        self.sceneLenCnnPool = sceneLenCnnPool
 
         if scoreConvWindSize > 1:
             self.scoreConv = ScoreConv(scoreConvWindSize,scoreConvChan,scoreConvBiLay,scoreConvAtt)
@@ -262,10 +212,6 @@ class CNN_sceneDet(nn.Module):
             self.scoreConv = None
 
         if self.pool == 'linear':
-
-            if modelType.find("dense") != -1:
-                raise NotImplementedError("Can't use densenet and fully connected layer pooling.")
-
             self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
 
     def forward(self,x,gt=None,attList=None):
@@ -303,9 +249,9 @@ class SceneDet(nn.Module):
 
     Args:
     - temp_model (str): the architecture of the temporal model. Can be 'RNN', 'resnet50' or 'resnet101'. If a resnet is chosen the temporal model will be a CNN
-    - featModelName,pretrainDataSetFeat,layFeatCut : the argument to build the visual model (see buildFeatModel())
+    - featModelName : the argument to build the visual model (see buildFeatModel())
     - audioFeatModelName (str): the audio architecture (see buildAudioFeatModel()). Should be set to 'None' to not use an audio model
-    - hiddenSize,layerNb,dropout,bidirect : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
+    - hiddenSize,layerNb,dropout : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
     - cuda (bool): whether or not the computation should be done on gpu
     - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
     - chanTempMod, pretrTempMod, poolTempMod : respectively the chan, pretrained, pool and dilTempMod arguments to build the temporal resnet model (see CNN_sceneDet module). Ignored if the temporal \
@@ -313,12 +259,12 @@ class SceneDet(nn.Module):
 
     '''
 
-    def __init__(self,temp_model,featModelName,pretrainDataSetFeat,audioFeatModelName,hiddenSize,layerNb,dropout,bidirect,cuda,layFeatCut,multiGPU,\
-                        chanTempMod,pretrTempMod,poolTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,sceneLenCnnPool,scoreConvAtt):
+    def __init__(self,temp_model,featModelName,audioFeatModelName,hiddenSize,layerNb,dropout,cuda,multiGPU,\
+                        poolTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,scoreConvAtt):
 
         super(SceneDet,self).__init__()
 
-        self.featModel = buildFeatModel(featModelName,pretrainDataSetFeat,layFeatCut)
+        self.featModel = buildFeatModel(featModelName)
 
         if multiGPU:
             self.featModel = DataParallel(self.featModel,dim=0)
@@ -333,23 +279,19 @@ class SceneDet(nn.Module):
         self.temp_model = temp_model
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
-        if featModelName=="resnet50" or featModelName=="resnet101":
-            self.nbFeat = 256*2**(layFeatCut-1)
-        elif featModelName=="resnet18":
-            self.nbFeat = 64*2**(layFeatCut-1)
-        elif featModelName=="googLeNet":
-            self.nbFeat = 1024
+        if featModelName=="resnet50" or featModelName=="resnet101" or featModelName=="resnet151":
+            self.nbFeat = 256*2**(4-1)
         else:
-            raise ValueError("Unkown feat model type : ",featModelName)
+            self.nbFeat = 64*2**(4-1)
 
         if not self.audioFeatModel is None:
             self.nbFeat += 128
 
         if self.temp_model == "RNN":
-            self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout,bidirect)
+            self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout)
         elif self.temp_model.find("net") != -1:
-            self.tempModel = CNN_sceneDet(layFeatCut,self.temp_model,chanTempMod,pretrTempMod,poolTempMod,multiGPU,scoreConvWindSize=scoreConvWindSize,\
-                                            scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,sceneLenCnnPool=sceneLenCnnPool,scoreConvAtt=scoreConvAtt)
+            self.tempModel = CNN_sceneDet(self.temp_model,poolTempMod,multiGPU,scoreConvWindSize=scoreConvWindSize,\
+                                            scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,scoreConvAtt=scoreConvAtt)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -415,9 +357,8 @@ class SceneDet(nn.Module):
 
 def netBuilder(args):
 
-    net = SceneDet(args.temp_model,args.feat,args.pretrain_dataset,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,args.bidirect,\
-                    args.cuda,args.lay_feat_cut,args.multi_gpu,args.chan_temp_mod,args.pretr_temp_mod,\
-                    args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,args.scene_len_cnn_pool,\
+    net = SceneDet(args.temp_model,args.feat,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,\
+                    args.cuda,args.multi_gpu,args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,\
                     args.score_conv_attention)
 
     return net
@@ -432,9 +373,6 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
                         help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')
-
-    argreader.parser.add_argument('--scene_len_cnn_pool', type=int, metavar='N',
-                        help='The length of the shot sequence once resampled by the cnn pooling')
 
     argreader.parser.add_argument('--score_conv_wind_size', type=int, metavar='N',
                         help='The size of the 1d convolution to apply on scores if temp model is a CNN. Set to 1 to remove that layer')
@@ -460,23 +398,8 @@ def addArgs(argreader):
     argreader.parser.add_argument('--bidirect', type=args.str2bool,metavar='BIDIR',
                         help='If true, the RNN will be bi-bidirectional')
 
-    argreader.parser.add_argument('--train_visual', type=args.str2bool,metavar='BOOL',
-                        help='If true, the visual feature extractor will also be trained')
-
-    argreader.parser.add_argument('--train_audio', type=args.str2bool,metavar='BOOL',
-                        help='If true, the audio feature extractor will also be trained')
-
-    argreader.parser.add_argument('--chan_temp_mod', type=int,metavar='LMAX',
-                        help='The channel number of the temporal model, if it is a CNN')
-
-    argreader.parser.add_argument('--pretr_temp_mod', type=args.str2bool, metavar='S',
-                        help='To have the temporal model pretrained on ImageNet, if it is a CNN')
-
-    argreader.parser.add_argument('--lay_feat_cut', type=int,metavar='LMAX',
-                        help='The layer at which to take the feature in case which the resnet feature extractor is chosen.')
-
     argreader.parser.add_argument('--temp_model', type=str,metavar='MODE',
-                        help="The architecture to use to model the temporal dependencies. Can be \'RNN\', \'resnet50\' or \'resnet101\'.")
+                        help="The architecture to use to model the temporal dependencies. Can be \'RNN\' or a resnet architecture : \'resnet18\', \'resnet50\', \'resnet101\', etc.")
 
     argreader.parser.add_argument('--discr_dropout', type=args.str2bool, metavar='S',
                         help='To apply dropout on the discriminator (only useful when using adversarial loss term)')
