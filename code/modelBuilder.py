@@ -194,7 +194,7 @@ class CNN_sceneDet(nn.Module):
         else:
             expansion = 1
 
-        self.cnn = getattr(resnet,modelType)(pretrained=True)
+        self.cnn = getattr(resnet,modelType)(pretrained=True,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
 
         if multiGPU:
             self.cnn = DataParallel(self.cnn,dim=0)
