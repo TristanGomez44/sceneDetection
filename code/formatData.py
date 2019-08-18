@@ -66,7 +66,6 @@ def main(argv=None):
                 pass
 
         removeBadChar("youtube_large")
-
         videoPaths = sorted(glob.glob("../data/youtube_large/*.mp4"))
 
         movieDict = {}
@@ -119,7 +118,7 @@ def main(argv=None):
                     os.rename(scene,"../data/baddescr_youtube_large/"+os.path.basename(scene))
             else:
                 if not os.path.exists("../data/youtube_large/{}".format(movieName)):
-                    os.makedirs("../data/{}".format(movieName))
+                    os.makedirs("../data/youtube_large/{}".format(movieName))
                 for scene in movieDict[movieName]:
                     os.rename(scene,"../data/youtube_large/{}/{}".format(movieName,os.path.basename(scene)))
 
@@ -569,10 +568,11 @@ def removeBadChar_list(videoPaths):
     for videoPath in videoPaths:
         targetPath = removeBadChar_filename(videoPath)
 
-        if os.path.exists(targetPath) and (not os.path.isdir(videoPath)):
-            os.remove(videoPath)
-        else:
-            os.rename(videoPath,targetPath)
+        if targetPath != videoPath:
+            if os.path.exists(targetPath) and (not os.path.isdir(videoPath)):
+                os.remove(videoPath)
+            else:
+                os.rename(videoPath,targetPath)
 
 def removeBadChar(dataset):
 
