@@ -1,4 +1,3 @@
-mkdir ../data/Holly2
 mkdir ../data/Holly2/0
 mkdir ../data/Holly2/1
 mkdir ../data/Holly2/2
@@ -58,7 +57,7 @@ mkdir ../data/Holly2/55
 mkdir ../data/Holly2/56
 mkdir ../data/Holly2/57
 mkdir ../data/Holly2/58
-mv ../data/Holly2/sceneclipautoautotrain00447.avi ../data/Holly2/0/sceneclipautoautotrain00447.avi 
+mv ../data/Holly2/sceneclipautoautotrain00447.avi ../data/Holly2/0/sceneclipautoautotrain00447.avi
 mv ../data/Holly2/sceneclipautoautotrain00448.avi ../data/Holly2/0/sceneclipautoautotrain00448.avi
 mv ../data/Holly2/sceneclipautoautotrain00449.avi ../data/Holly2/0/sceneclipautoautotrain00449.avi
 mv ../data/Holly2/sceneclipautoautotrain00450.avi ../data/Holly2/0/sceneclipautoautotrain00450.avi
