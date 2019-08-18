@@ -23,7 +23,7 @@ import modelBuilder
 import metrics
 import utils
 
-def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres,lenPond,relativeToFrame):
+def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres,lenPond):
     '''
     Evaluate a model. It requires the scores for each video to have been computed already with the trainVal.py script. Check readme to
     see how to compute the scores for each video.
@@ -43,8 +43,9 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
     - epoch (int): the epoch at which to evaluate
     - firstThres (float): the lower bound of the threshold range to evaluate
     - lastThres (float): the upper bound of the threshold range to evaluate
-    '''
+    - lenPond (bool): set this to True to ponderate coverage and overflow by the length of the ground-truth scene
 
+    '''
 
     resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,epoch)),key=utils.findNumbers))
     videoNameDict = buildVideoNameDict(dataset_test,0,1,resFilePaths)
@@ -69,14 +70,11 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
         fileName = os.path.basename(os.path.splitext(path)[0])
         videoName = videoNameDict[path]
 
-        #Compute the f-score with the default threshold (0.5) and with a threshold tuned on each video with a leave-one out method
-        metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score",lenPond,relativeToFrame)
-
-        if not relativeToFrame:
-            #Same thing with the others metrics
-            metEval["F-score New"][j],metDef["F-score New"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score New",lenPond)
-            metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU",lenPond)
-            metEval["DED"][j],metDef["DED"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED",lenPond)
+        #Compute the metrics with the default threshold (0.5) and with a threshold tuned on each video with a leave-one out method
+        metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score",lenPond)
+        metEval["F-score New"][j],metDef["F-score New"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score New",lenPond)
+        metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU",lenPond)
+        metEval["DED"][j],metDef["DED"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED",lenPond)
 
     #Writing the latex table
     printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
@@ -91,7 +89,7 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
     print("Best F-score : ",str(round(metEval["F-score"].mean(),2)),"Default F-score :",str(round(metDef["F-score"].mean(),2)),\
           "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
 
-def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond,relativeToFrame=False):
+def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond):
     '''
     Evaluate a model on a video by using the default threshold and a threshold tuned on all the other video
 
@@ -106,29 +104,22 @@ def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_t
                     this dictionnary is updated during the execution of this function.
     - metric (str): the metric to evaluate.
     - lenPond (bool): set this to True to ponderate coverage and overflow by the length of the ground-truth scene
-    - relativeToFrame (bool): set to True to compute the metrics relative to frame index and not shot index
     Returns:
     - metr_dict[metric] (float): the value of the metric using the tuned threshold
     - def_metr_dict[metric]: the metric using default threshold
 
     '''
 
-    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,relativeToFrame=relativeToFrame,lenPond=lenPond)
+    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond=lenPond)
 
-    gt = load_data.getGT(dataset_test,videoName,relativeToFrame).astype(int)
+    gt = load_data.getGT(dataset_test,videoName).astype(int)
     scores = np.genfromtxt(path)[:,1]
 
     pred = (scores > thres).astype(int)
 
-    if relativeToFrame:
-        pred = shotInd_to_frameInd(pred,dataset_test,videoName)
-
     metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]),lenPond)
 
     pred = (scores > 0.5).astype(int)
-
-    if relativeToFrame:
-        pred = shotInd_to_frameInd(pred,dataset_test,videoName)
 
     def_metr_dict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]),lenPond)
 
@@ -138,7 +129,7 @@ def formatMetr(metricValuesArr):
 
     return "$"+str(round(metricValuesArr.mean(),2))+" \pm "+str(round(metricValuesArr.std(),2))+"$"
 
-def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric,relativeToFrame=False,lenPond=True):
+def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric,lenPond=True):
 
     '''
     Find for the best threshold among a list by testing each threshold on the whole dataset except one video.
@@ -153,7 +144,6 @@ def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTu
                     this dictionnary is updated during the execution of this function.
     - metric (str): the metric to evaluate.
     - lenPond (bool): set this to True to ponderate coverage and overflow by the length of the ground-truth scene
-    - relativeToFrame (bool): set to True to compute the metrics relative to frame index and not shot index
     Returns:
     - optiFunc(metr_list) (float) : the performance of the model on every video but the one to exclude
     - thresList[argOptiFunc(metr_list)] (float) : the best threshold
@@ -174,12 +164,9 @@ def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTu
                 key = videoToEvalName+str(thres)+metric
                 if not key in metTun.keys():
 
-                    gt = load_data.getGT(dataset,videoNameDict[path],relativeToFrame).astype(int)
+                    gt = load_data.getGT(dataset,videoNameDict[path]).astype(int)
                     scores = np.genfromtxt(path)[:,1]
                     pred = (scores > thres).astype(int)
-
-                    if relativeToFrame:
-                        pred = shotInd_to_frameInd(pred,dataset,videoNameDict[path])
 
                     metrDict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
                     metTun[key] = metrDict[metric]
@@ -189,19 +176,6 @@ def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTu
         metr_list[i] = mean/(len(resFilePaths)-1)
 
     return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
-
-def shotInd_to_frameInd(scenes,dataset,videoName):
-    ''' Convert a list of scene boundaries using shot index to a list using frame index '''
-
-    shotsF = np.genfromtxt("../data/"+dataset+"/"+videoName+"/result.csv").astype(int)
-
-    frameInds = shotsF[scenes.nonzero()].mean(axis=1).astype(int)
-
-    lastFrameInd = shotsF[-1,1]
-    scenesF = np.zeros(lastFrameInd+1).astype(int)
-    scenesF[frameInds] = 1
-
-    return scenesF
 
 def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
     '''
@@ -483,7 +457,6 @@ def main(argv=None):
 
     argreader.parser.add_argument('--model_name',type=str,metavar="NAME",help='The name of the model as will appear in the latex table produced by the --eval_model_leave_one_out argument.')
     argreader.parser.add_argument('--len_pond',action="store_true",help='Use this argument to ponderate the coverage and overflow by the GT scene length when using --eval_model_leave_one_out.')
-    argreader.parser.add_argument('--relative_to_frame',action="store_true",help='Use this argument to compute the metrics relative to frame index and not shot index when using --eval_model_leave_one_out.')
 
     argreader.parser.add_argument('--fine_tuned_thres',action="store_true",help='To automatically fine tune the decision threshold of the model. Only useful for the --bbc_annot_dist arg. \
                                                                                 Check the help of this arg.')
@@ -503,7 +476,7 @@ def main(argv=None):
         epoch = int(args.eval_model_leave_one_out[0])
         thresMin = args.eval_model_leave_one_out[1]
         thresMax = args.eval_model_leave_one_out[2]
-        evalModel_leaveOneOut(args.exp_id,args.model_id,args.model_name,args.dataset_test,epoch,thresMin,thresMax,args.len_pond,args.relative_to_frame)
+        evalModel_leaveOneOut(args.exp_id,args.model_id,args.model_name,args.dataset_test,epoch,thresMin,thresMax,args.len_pond)
 
 if __name__ == "__main__":
     main()
