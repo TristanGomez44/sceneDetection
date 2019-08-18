@@ -69,15 +69,17 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
         fileName = os.path.basename(os.path.splitext(path)[0])
         videoName = videoNameDict[path]
 
+        #Compute the f-score with the default threshold (0.5) and with a threshold tuned on each video with a leave-one out method
         metEval["F-score"][j],metDef["F-score"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score",lenPond,relativeToFrame)
 
         if not relativeToFrame:
+            #Same thing with the others metrics
             metEval["F-score New"][j],metDef["F-score New"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"F-score New",lenPond)
             metEval["IoU"][j],metDef["IoU"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"IoU",lenPond)
             metEval["DED"][j],metDef["DED"][j] = findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,"DED",lenPond)
 
+    #Writing the latex table
     printHeader = not os.path.exists("../results/{}_metrics.csv".format(dataset_test))
-
     with open("../results/{}_metrics.csv".format(dataset_test),"a") as text_file:
         if printHeader:
             print("Model,Threshold tuning,F-score,F-score New,IoU,DED",file=text_file)
@@ -90,7 +92,28 @@ def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThr
           "Best IoU :",str(round(metEval["IoU"].mean(),2)),"Default IoU :",str(round(metDef["IoU"].mean(),2)))
 
 def findBestThres_computeMetrics(path,videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,lenPond,relativeToFrame=False):
-    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,relativeToFrame=relativeToFrame)
+    '''
+    Evaluate a model on a video by using the default threshold and a threshold tuned on all the other video
+
+    Args:
+    - path (str): the path to the video to evaluate
+    - videoName (str): the name of the video
+    - resFilePaths (list): the paths to the scores given by the model for each video of the dataset
+    - thresList (list): the list of threshold value to try to find the best one
+    - dataset_test (str): the dataset to eval
+    - videoNameDict (dict): a dictionnary mapping the score file paths to the video names
+    - metTun (dict): a dictionnary containing the performance of the model for each threshold and each video. It allows to not repeat computation. \
+                    this dictionnary is updated during the execution of this function.
+    - metric (str): the metric to evaluate.
+    - lenPond (bool): set this to True to ponderate coverage and overflow by the length of the ground-truth scene
+    - relativeToFrame (bool): set to True to compute the metrics relative to frame index and not shot index
+    Returns:
+    - metr_dict[metric] (float): the value of the metric using the tuned threshold
+    - def_metr_dict[metric]: the metric using default threshold
+
+    '''
+
+    _,thres = bestThres(videoName,resFilePaths,thresList,dataset_test,videoNameDict,metTun,metric,relativeToFrame=relativeToFrame,lenPond=lenPond)
 
     gt = load_data.getGT(dataset_test,videoName,relativeToFrame).astype(int)
     scores = np.genfromtxt(path)[:,1]
@@ -115,7 +138,26 @@ def formatMetr(metricValuesArr):
 
     return "$"+str(round(metricValuesArr.mean(),2))+" \pm "+str(round(metricValuesArr.std(),2))+"$"
 
-def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric,relativeToFrame=False):
+def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTun,metric,relativeToFrame=False,lenPond=True):
+
+    '''
+    Find for the best threshold among a list by testing each threshold on the whole dataset except one video.
+
+    Args:
+    - videoToEvalName (str): the name of the video to exclude
+    - resFilePaths (list): the paths to the scores given by the model for each video of the dataset
+    - thresList (list): the list of threshold value to try to find the best one
+    - dataset_test (str): the dataset to eval
+    - videoNameDict (dict): a dictionnary mapping the score file paths to the video names
+    - metTun (dict): a dictionnary containing the performance of the model for each threshold and each video. It allows to not repeat computation. \
+                    this dictionnary is updated during the execution of this function.
+    - metric (str): the metric to evaluate.
+    - lenPond (bool): set this to True to ponderate coverage and overflow by the length of the ground-truth scene
+    - relativeToFrame (bool): set to True to compute the metrics relative to frame index and not shot index
+    Returns:
+    - optiFunc(metr_list) (float) : the performance of the model on every video but the one to exclude
+    - thresList[argOptiFunc(metr_list)] (float) : the best threshold
+    '''
 
     optiFunc = np.min if metric == "DED" else np.max
     argOptiFunc = np.argmin if metric == "DED" else np.argmax
@@ -148,17 +190,18 @@ def bestThres(videoToEvalName,resFilePaths,thresList,dataset,videoNameDict,metTu
 
     return optiFunc(metr_list),thresList[argOptiFunc(metr_list)]
 
-def shotInd_to_frameInd(pred,dataset,videoName):
+def shotInd_to_frameInd(scenes,dataset,videoName):
+    ''' Convert a list of scene boundaries using shot index to a list using frame index '''
 
     shotsF = np.genfromtxt("../data/"+dataset+"/"+videoName+"/result.csv").astype(int)
 
-    frameInds = shotsF[pred.nonzero()].mean(axis=1).astype(int)
+    frameInds = shotsF[scenes.nonzero()].mean(axis=1).astype(int)
 
     lastFrameInd = shotsF[-1,1]
-    predF = np.zeros(lastFrameInd+1).astype(int)
-    predF[frameInds] = 1
+    scenesF = np.zeros(lastFrameInd+1).astype(int)
+    scenesF[frameInds] = 1
 
-    return predF
+    return scenesF
 
 def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
     '''
@@ -223,13 +266,26 @@ def tsne(dataset,exp_id,model_id,seed,nb_scenes=10):
             print("\tFeature for video {} does not exist".format(videoName))
 
 def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,plotDist,epoch):
+    ''' This function plots the scores given by a model to seral videos.
+
+    It also plots the distance between shot features and it also produces features showing the correlation between
+    scene change and the score value, or its second derivative.
+
+    Args:
+    - exp_id (str): the experiment id
+    - model_id (str): the model id
+    - exp_id_init (str): the experiment of a another model you want to plot the distance between features of. Ignored is plotDist=False
+    - model_id_init (str): the id of a another model you want to plot the distance between features of. Ignored is plotDist=False
+    - dataset_test (str): the dataset to plot
+    - plotDist (bool): set to True to plot the distance between features.
+    - epoch (int): the epoch at which the model is evaluated.
+
+    '''
 
     resFilePaths = sorted(glob.glob("../results/{}/{}_epoch{}*.csv".format(exp_id,model_id,epoch)))
 
     videoPaths = load_data.findVideos(dataset_test,propStart=0,propEnd=1)
     videoNames = list(map(lambda x:os.path.basename(os.path.splitext(x)[0]),videoPaths))
-
-    print("../results/{}/{}_epoch*.csv".format(exp_id,model_id))
 
     scoresNewScAll,scoresNoScAll,scoAccNewScAll,scoAccNoScAll = np.array([]),np.array([]),np.array([]),np.array([])
 
@@ -290,11 +346,14 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,plotDist,ep
                 #is not defined for the first shot, so we remove it
                 plotHist(gt[1:],dists,exp_id,fileName,sigName="Distance",sigShortName="dist")
 
+            #Plot a histogram showing a correlation between score value and scene change
             plotHist(gt,scores,exp_id,fileName,sigName="Score",sigShortName="sco")
 
+            #Plot a histogram showing a correlation between score acceleration and scene change
             scoAcc = scores[2:]-2*scores[1:-1]+scores[:-2]
             plotHist(gt[1:-1],scoAcc,exp_id,fileName,sigName="Score Acceleration",sigShortName="scoAcc")
 
+            #For one video, plot two 2D histogram showing distribution of score values and score second derivative values, when there is a scene change and when there is not.
             scoresNewSc, scoAccNewSc, scoresNoSc, scoAccNoSc = split_and_plot2Hist(gt[1:-1],scores[2:],scoAcc,exp_id,fileName,sigName1="Score",sigName2="Score Acceleration",sigShortName1="sco",sigShortName2="accSco")
 
             scoresNewScAll = np.concatenate((scoresNewScAll,scoresNewSc),axis=0)
@@ -308,6 +367,7 @@ def plotScore(exp_id,model_id,exp_id_init,model_id_init,dataset_test,plotDist,ep
     sig1Max,sig1Min = max(scoresNewScAll.max(),scoresNoScAll.max()),min(scoresNewScAll.min(),scoresNoScAll.min())
     sig2Max,sig2Min = max(scoAccNewScAll.max(),scoAccNoScAll.max()),min(scoAccNewScAll.min(),scoAccNoScAll.min())
 
+    #Plot two 2D histograms by aggregating the values accumulated for each preceding 2D histogram
     plot2DHist("Scores","Score acceleration","sco","scoAcc",scoresNewScAll,scoAccNewScAll,(sig1Min,sig1Max),(sig2Min,sig2Max),\
                 "Scores Score acceleration when scene change",exp_id,"allEp_newSc")
 
@@ -377,6 +437,8 @@ def plotFeat(exp_id,model_id,videoName,nbShots,color,label,legHandles,ax1):
 
 def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
 
+    ''' Build a dictionnary associating a path to a video name (it can be the path to any file than contain the name of a video in its file name) '''
+
     videoPaths = list(filter(lambda x:x.find(".wav") == -1,sorted(glob.glob("../data/{}/*.*".format(dataset_test)))))
     videoPaths = list(filter(lambda x:x.find(".xml") == -1,videoPaths))
     videoPaths = list(filter(lambda x:os.path.isfile(x),videoPaths))
@@ -392,133 +454,6 @@ def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
             raise ValueError("The path "+" "+path+" "+"doesnt have a video name")
 
     return videoNameDict
-
-def evalModel(exp_id,model_id,dataset_test,test_part_beg,test_part_end,firstEpoch,lastEpoch,firstThres,lastThres):
-
-    resFilePaths = np.array(sorted(glob.glob("../results/{}/{}_epoch*.csv".format(exp_id,model_id)),key=utils.findNumbers))
-
-    if firstEpoch is None:
-        firstEpoch = utils.findNumbers(resFilePaths[0][resFilePaths[0].find("epoch")+5:].split("_")[0])
-
-    if lastEpoch is None:
-        lastEpoch = utils.findNumbers(resFilePaths[-1][resFilePaths[-1].find("epoch")+5:].split("_")[0])
-
-    #If there's only one epoch to plot, theres only one point to plot which is why the marker has to be visible
-    if firstEpoch == lastEpoch:
-        mark = "o"
-    else:
-        mark = ","
-
-    videoNameDict = buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths)
-
-    resFilePaths = np.array(list(filter(lambda x:x in videoNameDict.keys(),resFilePaths)))
-
-    #thresList = np.array([0.5,0.6,0.65,0.7,0.75,0.8])
-    thresList = np.arange(firstThres,lastThres,step=(lastThres-firstThres)/10)
-
-    iouArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
-    iouArr_pred,iouArr_gt = iouArr.copy(),iouArr.copy()
-    fscoArr = np.zeros((len(thresList),lastEpoch-firstEpoch+1))
-
-    cmap = cm.rainbow(np.linspace(0, 1, len(thresList)))
-
-    fig = plt.figure(1,figsize=(13,8))
-    ax = fig.add_subplot(111)
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.7, box.height])
-
-    fig_pred = plt.figure(2,figsize=(13,8))
-    ax_pred = fig_pred.add_subplot(111)
-    box = ax_pred.get_position()
-    ax_pred.set_position([box.x0, box.y0, box.width * 0.7, box.height])
-
-    fig_gt = plt.figure(3,figsize=(13,8))
-    ax_gt = fig_gt.add_subplot(111)
-    box = ax_gt.get_position()
-    ax_gt.set_position([box.x0, box.y0, box.width * 0.7, box.height])
-
-    fig_sco = plt.figure(4,figsize=(13,8))
-    ax_fsco = fig_sco.add_subplot(111)
-    box = ax_fsco.get_position()
-    ax_fsco.set_position([box.x0, box.y0, box.width * 0.7, box.height])
-
-    for i,thres in enumerate(thresList):
-
-        for k in range(lastEpoch-firstEpoch+1):
-
-            resFilePaths = sorted(glob.glob("../results/{}/{}_epoch{}_*.csv".format(exp_id,model_id,k+firstEpoch)),key=utils.findNumbers)
-
-            iou_mean,iou_pred_mean,iou_gt_mean,f_sco_mean = 0,0,0,0
-
-            for j,path in enumerate(resFilePaths):
-
-                fileName = os.path.basename(os.path.splitext(path)[0])
-                videoName = videoNameDict[path]
-
-                gt = load_data.getGT(dataset_test,videoName).astype(int)
-                #gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset_test,videoName)).astype(int)
-                scores = np.genfromtxt(path)[:,1]
-
-                pred = (scores > thres).astype(int)
-
-                metrDict = metrics.binaryToAllMetrics(torch.tensor(pred[np.newaxis,:]),torch.tensor(gt[np.newaxis,:]))
-
-                iou_mean += metrDict["IoU"]
-                iou_pred_mean += metrDict["IoU_pred"]
-                iou_gt_mean += metrDict["IoU_gt"]
-                f_sco_mean +=  metrDict["F-score"]
-
-            iouArr[i,k] = iou_mean/len(resFilePaths)
-            iouArr_pred[i,k] = iou_pred_mean/len(resFilePaths)
-            iouArr_gt[i,k] = iou_gt_mean/len(resFilePaths)
-            fscoArr[i,k] = f_sco_mean/len(resFilePaths)
-
-        ax.plot(np.arange(firstEpoch,lastEpoch+1),iouArr[i],label=thres,color=cmap[i], marker=mark)
-        ax_pred.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_pred[i],label=thres,color=cmap[i],marker=mark)
-        ax_gt.plot(np.arange(firstEpoch,lastEpoch+1),iouArr_gt[i],label=thres,color=cmap[i],marker=mark)
-        ax_fsco.plot(np.arange(firstEpoch,lastEpoch+1),fscoArr[i],label=thres,color=cmap[i],marker=mark)
-
-    plt.figure(1,figsize=(13,8))
-    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("IoU")
-    ax.set_ylim(0,1)
-
-    plt.figure(2,figsize=(13,8))
-    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
-    ax_pred.set_xlabel("Epoch")
-    ax_pred.set_ylabel("IoU pred")
-    ax_pred.set_ylim(0,1)
-
-    plt.figure(3,figsize=(13,8))
-    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
-    ax_gt.set_xlabel("Epoch")
-    ax_gt.set_ylabel("IoU gt")
-    ax_gt.set_ylim(0,1)
-
-    plt.figure(4,figsize=(13,8))
-    plt.legend(loc="center right",bbox_to_anchor=(1.5,0.5))
-    ax_fsco.set_xlabel("Epoch")
-    ax_fsco.set_ylabel("F-score")
-    ax_fsco.set_ylim(0,1)
-
-    if not os.path.exists("../vis/{}".format(exp_id)):
-        os.makedirs("../vis/{}".format(exp_id))
-
-    fig.savefig("../vis/{}/model{}_iouThres.png".format(exp_id,model_id))
-    fig_pred.savefig("../vis/{}/model{}_iouPredThres.png".format(exp_id,model_id))
-    fig_gt.savefig("../vis/{}/model{}_iouGTThres.png".format(exp_id,model_id))
-    fig_sco.savefig("../vis/{}/model{}_fscoThres.png".format(exp_id,model_id))
-
-    bestInd = np.argmax(iouArr)
-    bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
-
-    print("Best IoU's : ",iouArr[bestThresInd],"epoch",bestEpochInd+firstEpoch,"threshold",round(thresList[bestThresInd],3),end=" ")
-
-    bestInd = np.argmax(fscoArr)
-    bestThresInd,bestEpochInd = bestInd//iouArr.shape[1],bestInd%iouArr.shape[1]
-
-    print("Best F-scores : ",fscoArr[bestThresInd],"epoch",bestEpochInd+firstEpoch,"threshold",round(thresList[bestThresInd],2))
 
 def main(argv=None):
 
