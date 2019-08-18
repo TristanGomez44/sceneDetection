@@ -1,9 +1,10 @@
 mkdir ../data/youtube_large
 
 #Dowload the videos with youtube-dl in a folder called "youtube" in the "data" folder :
-youtube-dl -f 18 -ciw -o "../data/youtube_large/%(title)s.%(ext)s" -v https://www.youtube.com/user/movieclips/
+youtube-dl -f 18 -ciw -o "../data/youtube_large/%(title)s.%(ext)s" -v https://www.youtube.com/user/movieclips/ --write-description
 
 #The -f 18 argument download the video in a 640x360 mp4 format.
+#The --write-description also download the descriptions of the videos, necessary to find from which movie every video comes from.
 
 #Once the dataset is downloaded, group the videos by movies with the formatData.py script :
 
@@ -11,9 +12,8 @@ python formatData.py --dataset youtube_large --format_youtube
 
 #Then, merge the videos and create the annotations with the same script, different arguments :
 
-python formatData.py --dataset youtube_large --merge_videos mp4 --write-description
+python formatData.py --dataset youtube_large --merge_videos mp4
 
-#The --write-description also download the descriptions of the videos, necessary to find from which movie every video comes from.
 
 #There is 2000 movies and 25 000 clips, so this should take a while (2 or 3 days...). You can stop the download and go to the next
 #step if you don't want to wait, things will work even if not all the videos are downloaded.
