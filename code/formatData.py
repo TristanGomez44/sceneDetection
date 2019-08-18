@@ -491,14 +491,22 @@ def tripletToInterv(h5FilePath,segKey,fps,frameNb,savePath):
     np.savetxt(savePath,intervCSV)
 
 def getNbFrames(path):
-    pimsVid = pims.Video(path)
 
-    if hasattr(pimsVid,"_frame_rate"):
-        fps = float(pimsVid._frame_rate)
-        nbFrames = int(float(pimsVid._duration)*fps)
-    else:
-        nbFrames = int(pimsVid._len)
-    return nbFrames
+    try:
+        pimsVid = pims.Video(path)
+        if hasattr(pimsVid,"_frame_rate"):
+            fps = float(pimsVid._frame_rate)
+            nbFrames = int(float(pimsVid._duration)*fps)
+        else:
+            nbFrames = int(pimsVid._len)
+        return nbFrames
+    except OSError:
+
+        res = subprocess.check_output("ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 {}".format(path),shell=True)
+        if res == "N/A":
+            res = subprocess.check_output("ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nokey=1:noprint_wrappers=1 {}".format(path),shell=True)
+
+        return int(res)
 
 def generateRandomScenes(shotNb,mean,var=0.5):
 
