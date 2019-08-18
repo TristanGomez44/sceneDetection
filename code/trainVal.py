@@ -574,8 +574,7 @@ def main(argv=None):
 
     if args.comp_feat:
 
-        img_size = (args.img_width,args.img_heigth)
-        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,(args.img_width,args.img_heigth),\
+        testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,args.img_size,\
                                           args.audio_len,args.resize_image,args.exp_id,args.random_frame_val)
 
         if args.feat != "None":
@@ -617,11 +616,6 @@ def main(argv=None):
 
     else:
 
-        if args.img_width == -1 or args.img_heigth == -1:
-            img_size = None
-        else:
-            img_size = (args.img_width,args.img_heigth)
-
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
         if args.cuda:
@@ -636,7 +630,7 @@ def main(argv=None):
         trainLoader,trainDataset = load_data.buildSeqTrainLoader(args,audioLen)
 
         valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
-                                            (args.img_width,args.img_heigth),audioLen,args.resize_image,\
+                                            args.img_size,audioLen,args.resize_image,\
                                             args.exp_id,args.random_frame_val)
 
         #Building the net
@@ -666,8 +660,6 @@ def main(argv=None):
             paramToOpti.append(p)
 
         paramToOpti = (p for p in paramToOpti)
-
-        img_size = (args.img_width,args.img_heigth)
 
         #Getting the contructor and the kwargs for the choosen optimizer
         optimConst,kwargsOpti = get_OptimConstructor_And_Kwargs(args.optim,args.momentum)

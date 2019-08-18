@@ -81,7 +81,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
     - propEnd (float): the proportion of the dataset at which to stop using the videos. For example : propEnd=0 and propEnd=0.5 will only use the first half of the videos
     - lMin (int): the minimum length of a sequence during training
     - lMax (int): the maximum length of a sequence during training
-    - imgSize (tuple): a tuple containing (in order) the width and size of the image
+    - imgSize (int): the size of each side of the image
     - audioLen (int): the length of the audio extract for each shot
     - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
     - exp_id (str): the name of the experience
@@ -116,6 +116,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
         if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
+            print("For image resizing : ",imgSize)
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.RandomResizedCrop(imgSize),transforms.ToTensor(),normalize])
 
         self.FPSDict = {}
@@ -125,11 +126,13 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
     def __getitem__(self,vidInd):
 
-        data = torch.zeros(self.lMax,3,self.imgSize[0],self.imgSize[1])
+        data = torch.zeros(self.lMax,3,self.imgSize,self.imgSize)
         targ = torch.zeros(self.lMax)
         vidNames = []
 
         vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
+
+        print(vidName)
 
         if not self.videoPaths[vidInd] in self.FPSDict.keys():
             self.FPSDict[self.videoPaths[vidInd]] = utils.getVideoFPS(self.videoPaths[vidInd])
@@ -265,7 +268,7 @@ class VideoFrameDataset(torch.utils.data.Dataset):
         return self.nbShots
     def __getitem__(self,vidInd):
 
-        data = torch.zeros(3,self.imgSize[0],self.imgSize[1])
+        data = torch.zeros(3,self.imgSize,self.imgSize)
         vidFold = os.path.splitext(self.videoPaths[vidInd])[0]
         vidName = os.path.basename(vidFold)
 
@@ -393,7 +396,7 @@ class TestLoader():
 def buildSeqTrainLoader(args,audioLen):
 
     train_dataset = SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
-                                        (args.img_width,args.img_heigth),audioLen,args.resize_image,args.exp_id,args.max_shots,args.avg_scene_len)
+                                        args.img_size,audioLen,args.resize_image,args.exp_id,args.max_shots,args.avg_scene_len)
     sampler = Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
     trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
                       pin_memory=False,num_workers=args.num_workers)
@@ -402,8 +405,8 @@ def buildSeqTrainLoader(args,audioLen):
 
 def buildFrameTrainLoader(args):
 
-    train_dataset = VideoFrameDataset(args.dataset_train,args.train_part_beg,args.train_part_end,(args.img_width,args.img_heigth),args.resize_image,args.max_shots)
-    adv_dataset = VideoFrameDataset(args.dataset_adv,args.adv_part_beg,args.adv_part_end,(args.img_width,args.img_heigth),args.resize_image,args.max_shots)
+    train_dataset = VideoFrameDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.img_size,args.resize_image,args.max_shots)
+    adv_dataset = VideoFrameDataset(args.dataset_adv,args.adv_part_beg,args.adv_part_end,args.img_size,args.resize_image,args.max_shots)
 
     nbVideosTr,nbVideosAdv = len(train_dataset.videoPaths),len(adv_dataset.videoPaths)
 
@@ -510,10 +513,8 @@ def addArgs(argreader):
                                                                                 This is ignored if no adversarial loss is to be used (i.e. --adv_weight is set to 0 (see \
                                                                                 trainVal.py)). It can have the same values as --dataset_train.')
 
-    argreader.parser.add_argument('--img_width', type=int,metavar='WIDTH',
-                        help='The width of the resized images, if resize_image is True, else, the size of the image')
-    argreader.parser.add_argument('--img_heigth', type=int,metavar='HEIGTH',
-                        help='The height of the resized images, if resize_image is True, else, the size of the image')
+    argreader.parser.add_argument('--img_size', type=int,metavar='WIDTH',
+                        help='The size of each edge of the resized images, if resize_image is True, else, the size of the image')
 
     argreader.parser.add_argument('--train_part_beg', type=float,metavar='START',
                         help='The (normalized) start position of the dataset to use for training')
