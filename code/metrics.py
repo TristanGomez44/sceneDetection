@@ -66,9 +66,12 @@ def binaryToAllMetrics(predBin,targetBin,lenPond=True):
     iou,iou_pred,iou_gt,over,over_new,cover,ded = 0,0,0,0,0,0,0
     for i,(pred,targ) in enumerate(zip(predBounds,targBounds)):
 
-        iou_pred += IoU_oneRef(np.array(targ),np.array(pred))
-        iou_gt += IoU_oneRef(np.array(pred),np.array(targ))
-        iou += iou_pred*0.5+iou_gt*0.5
+        iou_pred_ = IoU_oneRef(np.array(targ),np.array(pred))
+        iou_gt_ = IoU_oneRef(np.array(pred),np.array(targ))
+
+        iou_pred += iou_pred_
+        iou_gt += iou_gt_
+        iou += iou_pred_*0.5+iou_gt_*0.5
         over += overflow(np.array(targ),np.array(pred),lenPond)
         over_new += overflow_new(np.array(targ),np.array(pred),lenPond)
         cover += coverage(np.array(targ),np.array(pred),lenPond)
@@ -179,11 +182,11 @@ def overflow_new(gt,pred,lenPond=False):
         return ov_gt_array.sum()
     else:
         return ov_gt_array.mean()
+
 def leng(scene):
     ''' The number of shot in an interval, i.e. a scene '''
 
     return scene[1]-scene[0]+1
-
 
 def IoU(gt,pred):
     ''' Computes the Intersection over Union of a scene segmentation
