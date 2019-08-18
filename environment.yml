@@ -131,17 +131,16 @@ dependencies:
   - zstd=1.3.7=h0b5b093_0
   - pytorch=1.0.1=py3.7_cuda9.0.176_cudnn7.4.2_2
   - torchvision=0.2.2=py_3
+  - pims
   - pip:
     - chardet==3.0.4
     - colorama==0.4.1
     - dask==1.2.0
     - idna==2.8
     - pigar==0.9.2
-    - pims==0+unknown
     - pysoundfile==0.9.0.post1
     - requests==2.21.0
     - tensorboardx==1.6
     - torch==1.0.1.post2
     - urllib3==1.24.2
 prefix: /home/tristan4/miniconda3/envs/pytorch
-
