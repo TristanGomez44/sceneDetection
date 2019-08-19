@@ -259,8 +259,8 @@ class SceneDet(nn.Module):
 
     '''
 
-    def __init__(self,temp_model,featModelName,audioFeatModelName,hiddenSize,layerNb,dropout,cuda,multiGPU,\
-                        poolTempMod,scoreConvWindSize,scoreConvChan,scoreConvBiLay,scoreConvAtt):
+    def __init__(self,temp_model="resnet50",featModelName="resnet50",audioFeatModelName="None",hiddenSize=1024,layerNb=2,dropout=0.5,cuda=True,multiGPU=False,\
+                        poolTempMod="mean",scoreConvWindSize=1,scoreConvChan="8",scoreConvBiLay=False,scoreConvAtt=False):
 
         super(SceneDet,self).__init__()
 
