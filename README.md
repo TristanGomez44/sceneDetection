@@ -115,16 +115,6 @@ You also save to set the arguments you set during first training. For example, t
 python trainVal.py -c model.config --exp_id expName --model_id modelName --start_mode fine_tune --init_path ../models/expName/modelresnet50_epoch58 --temp_model resnet50
 ```
 
-### Learning rate schedule
-
-You can set a learning rate schedule by providing a list of n learning rate values. The training will be divided in n equally long phases. Each phase will use one value. Example :
-
-```
-python trainVal.py -c model.config --exp_id testLR --model_id model1 --lr 0.01,0.001,0.0001 --epochs 300
-```
-
-This will use the learning rate 0.01 during epochs 1-100, 0.001 during 100-200, 0.0001 during 200-300.
-
 ### Model components
 
 To train a model with a resnet101 to extract visual features and a resnet50 to model dependencies :
@@ -141,7 +131,7 @@ python trainVal.py -c model.config --exp_id testRes101 --temp_model RNN --feat r
 
 To extract visual features you can use : "resnet18", "resnet50", "resnet101" and for the temporal component you can use : "resnet18", "resnet50", "resnet101" and "RNN".
 
-## Evaluate a model on a specific dataset :
+## Compute the scores given by a model on a specific dataset :
 
 To evaluate a model on a specific dataset, for example a dataset which folder name is "OVSD", run :
 
@@ -181,7 +171,9 @@ It will also save the scores produced by the model in one csv file per video in 
 
 In the processResults.py script there are functions to read those csv files and produces figures to visualise the predictions and also tables that summarise model performance under various metrics. I will now explain how to do that.
 
-### Visualise the results of an evaluated model with processResults.py
+### Visualise the scores given by a model on a specific dataset :
+
+This requires to have computed the scores before, with the method described just above.
 
 You can use the processResults.py script to visualise the predictions of a model. Let's say you want to visualise the predictions of the model we just talked about :
 
@@ -205,7 +197,9 @@ This produces several kind of figures :
  <figcaption>Distribution of scene change score</figcaption>
 </figure>
 
-### Get a table with the metrics values with processResults.py
+### Evaluate the scores given by a model on a specific dataset :
+
+This requires to have computed the scores before, with the method described just above.
 
 To get a table that show the metric value for a model evaluated on a dataset, run :
 
