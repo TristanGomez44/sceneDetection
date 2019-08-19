@@ -116,7 +116,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         if not resizeImage:
             self.preproc = transforms.Compose([transforms.ToTensor(),normalize])
         else:
-            print("For image resizing : ",imgSize)
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.RandomResizedCrop(imgSize),transforms.ToTensor(),normalize])
 
         self.FPSDict = {}
@@ -131,8 +130,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         vidNames = []
 
         vidName = os.path.basename(os.path.splitext(self.videoPaths[vidInd])[0])
-
-        print(vidName)
 
         if not self.videoPaths[vidInd] in self.FPSDict.keys():
             self.FPSDict[self.videoPaths[vidInd]] = utils.getVideoFPS(self.videoPaths[vidInd])
@@ -448,7 +445,7 @@ def readAudio(audioData,i,fps,fs,audio_len):
 
     return fullArray
 
-def getGT(dataset,vidName,relativeToFrame=False):
+def getGT(dataset,vidName):
     ''' For one video, returns a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
 
     This function computes the 0,1 list and save if it does not already exists.
@@ -461,33 +458,19 @@ def getGT(dataset,vidName,relativeToFrame=False):
 
     '''
 
-    if not relativeToFrame:
-        if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
+    if not os.path.exists("../data/{}/annotations/{}_targ.csv".format(dataset,vidName)):
 
-            shotBounds = np.genfromtxt("../data/{}/{}/result.csv".format(dataset,vidName))
+        shotBounds = np.genfromtxt("../data/{}/{}/result.csv".format(dataset,vidName))
 
-            scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
-            gt = utils.framesToShot(scenesBounds,shotBounds)
-            np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
-        else:
-            gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
-
-        return gt.astype(int)
-
+        scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName))
+        gt = utils.framesToShot(scenesBounds,shotBounds)
+        np.savetxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName),gt)
     else:
+        gt = np.genfromtxt("../data/{}/annotations/{}_targ.csv".format(dataset,vidName))
 
-        scenesBounds = np.genfromtxt("../data/{}/annotations/{}_scenes.txt".format(dataset,vidName)).astype(int)
-        lastFrameInd = scenesBounds[-1,1]
-
-        gtFrame = np.zeros(lastFrameInd+1)
-
-        gtFrame[scenesBounds[:,0]] = 1
-        gtFrame[0] = 0
-
-        return gtFrame.astype(int)
+    return gt.astype(int)
 
 def addArgs(argreader):
-
 
     argreader.parser.add_argument('--pretrain_dataset', type=str, metavar='N',
                         help='The network producing the features can only be pretrained on \'imageNet\'. This argument must be \
