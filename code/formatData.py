@@ -298,12 +298,21 @@ def main(argv=None):
             vidName = os.path.basename(os.path.splitext(path)[0])
 
             fps = utils.getVideoFPS(path)
-            frameNb = round(float(pims.Video(path)._duration)*fps)
+
+            if hasattr(pims.Video(path),"_len"):
+                frameNb = pims.Video(path)._len
+            else:
+                frameNb = round(float(pims.Video(path)._duration)*fps)
 
             #Removing holes in scenes segmentation
             rawSceneCSV = np.genfromtxt(rawSceneFilePaths[i])
             sceneCSV = removeHoles(rawSceneCSV)
-            sceneCSV[-1,1] = frameNb-1
+
+            if sceneCSV[-1,1] < frameNb-1 - fps:
+                sceneCSV = np.concatenate((sceneCSV,np.array([[sceneCSV[-1,1]+1,frameNb-1]])),axis=0)
+            else:
+                sceneCSV[-1,1] = frameNb-1
+
             np.savetxt(rawSceneFilePaths[i],sceneCSV)
 
             #Extract shots
