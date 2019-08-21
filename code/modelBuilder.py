@@ -21,25 +21,6 @@ def buildFeatModel(featModelName):
 
     return featModel
 
-def buildAudioFeatModel(audioFeatModelName):
-    ''' Build an audio feature model pretrained for speech tasks
-
-    Args:
-    - audioFeatModelName (str): the name of the architecture. Can only be vggish
-
-    Returns:
-    - model (nn.Module): the audio feature extractor
-
-    '''
-
-    if audioFeatModelName == "vggish":
-        model = vggish.VGG()
-        model.load_state_dict(torch.load("../models/vggish.pth"))
-    else:
-        raise ValueError("Unkown audio feat model :",audioFeatModelName)
-
-    return model
-
 class Discriminator(nn.Module):
     ''' This class defining the discriminator for the adversarial loss term
 
@@ -250,7 +231,6 @@ class SceneDet(nn.Module):
     Args:
     - temp_model (str): the architecture of the temporal model. Can be 'RNN', 'resnet50' or 'resnet101'. If a resnet is chosen the temporal model will be a CNN
     - featModelName : the argument to build the visual model (see buildFeatModel())
-    - audioFeatModelName (str): the audio architecture (see buildAudioFeatModel()). Should be set to 'None' to not use an audio model
     - hiddenSize,layerNb,dropout : the argument to build the LSTM. Ignored is the temporal model is a resnet. (see LSTM_sceneDet module)
     - cuda (bool): whether or not the computation should be done on gpu
     - multiGPU (bool): to run the computation on several gpus. Ignored if cuda is False
@@ -259,7 +239,7 @@ class SceneDet(nn.Module):
 
     '''
 
-    def __init__(self,temp_model="resnet50",featModelName="resnet50",audioFeatModelName="None",hiddenSize=1024,layerNb=2,dropout=0.5,cuda=True,multiGPU=False,\
+    def __init__(self,temp_model="resnet50",featModelName="resnet50",hiddenSize=1024,layerNb=2,dropout=0.5,cuda=True,multiGPU=False,\
                         poolTempMod="mean",scoreConvWindSize=1,scoreConvChan="8",scoreConvBiLay=False,scoreConvAtt=False):
 
         super(SceneDet,self).__init__()
@@ -269,13 +249,6 @@ class SceneDet(nn.Module):
         if multiGPU:
             self.featModel = DataParallel(self.featModel,dim=0)
 
-        if audioFeatModelName != "None":
-            self.audioFeatModel = buildAudioFeatModel(audioFeatModelName)
-            if multiGPU:
-                self.audioFeatModel = DataParallel(self.audioFeatModel,dim=0)
-        else:
-            self.audioFeatModel = None
-
         self.temp_model = temp_model
         #No need to throw an error because one has already been
         #thrown if the model type is unkown
@@ -283,9 +256,6 @@ class SceneDet(nn.Module):
             self.nbFeat = 256*2**(4-1)
         else:
             self.nbFeat = 64*2**(4-1)
-
-        if not self.audioFeatModel is None:
-            self.nbFeat += 128
 
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout)
@@ -295,12 +265,11 @@ class SceneDet(nn.Module):
 
         self.nb_gpus = torch.cuda.device_count()
 
-    def forward(self,x,audio,h=None,c=None,gt=None):
+    def forward(self,x,h=None,c=None,gt=None):
         ''' The forward pass of the scene change model
 
         Args:
         - x (torch.tensor): the visual data tensor
-        - audio (torch.tensor): the audio data tensor. Can be None if no audio model is used
         - h,c (torch.tensor): the hidden state  and cell initial value. Can be set to None to initialize it with zeros and is ignored when using a resnet as temporal model
 
         Returns:
@@ -308,11 +277,11 @@ class SceneDet(nn.Module):
         - the scene change score along with the final hidden state and cell state if an LSTM is used as temporal model.
         '''
 
-        x = self.computeFeat(x,audio,h,c)
+        x = self.computeFeat(x,h,c)
         self.features = x
         return self.computeScore(x,h,c,gt)
 
-    def computeFeat(self,x,audio,h=None,c=None):
+    def computeFeat(self,x,h=None,c=None):
 
         origBatchSize = x.size(0)
         origSeqLength = x.size(1)
@@ -321,13 +290,6 @@ class SceneDet(nn.Module):
 
         #Computing features
         x = self.featModel(x)
-
-        if not self.audioFeatModel is None:
-            audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
-
-            #Adding the audio features
-            audio = self.audioFeatModel(audio)
-            x = torch.cat((x,audio),dim=-1)
 
         #Unflattening
         x = x.view(origBatchSize,origSeqLength,-1)
@@ -357,7 +319,7 @@ class SceneDet(nn.Module):
 
 def netBuilder(args):
 
-    net = SceneDet(args.temp_model,args.feat,args.feat_audio,args.hidden_size,args.num_layers,args.dropout,\
+    net = SceneDet(args.temp_model,args.feat,args.hidden_size,args.num_layers,args.dropout,\
                     args.cuda,args.multi_gpu,args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,\
                     args.score_conv_attention)
 
@@ -367,9 +329,6 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--feat', type=str, metavar='N',
                         help='the net to use to produce feature for each shot')
-
-    argreader.parser.add_argument('--feat_audio', type=str, metavar='N',
-                        help='the net to use to produce audio feature for each shot')
 
     argreader.parser.add_argument('--pool_temp_mod', type=str, metavar='N',
                         help='The pooling used for the CNN temporal model. Can be \'mean\' or \'linear\'')

@@ -56,7 +56,7 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
     allOut = None
     allGT = None
 
-    for batch_idx,(data, audio,target,vidNames) in enumerate(loader):
+    for batch_idx,(data,target,vidNames) in enumerate(loader):
 
         if target.sum() > 0:
 
@@ -66,14 +66,12 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
             #Puting tensors on cuda
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
-                if not audio[0] is None:
-                    audio = audio.cuda()
 
             #Computing predictions
             if args.temp_model.find("net") != -1:
-                output = model(data,audio)
+                output = model(data)
             else:
-                output,_ = model(data,audio)
+                output,_ = model(data)
 
             #Computing loss
 
@@ -158,7 +156,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
     validBatch = 0
     nbVideos = 0
 
-    for batch_idx, (data, audio,target,vidName,frameInds) in enumerate(loader):
+    for batch_idx, (data,target,vidName,frameInds) in enumerate(loader):
 
         newVideo = (vidName != precVidName) or videoBegining
 
@@ -167,17 +165,15 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
 
         if args.cuda:
             data, target,frameInds = data.cuda(), target.cuda(),frameInds.cuda()
-            if not audio is None:
-                audio = audio.cuda()
 
         if args.temp_model.find("net") != -1:
-            output = model.computeFeat(data,audio).data
+            output = model.computeFeat(data).data
 
         else:
             if newVideo:
-                output,(h,c) = model(data,audio)
+                output,(h,c) = model(data)
             else:
-                output,(h,c) = model(data,audio,h,c)
+                output,(h,c) = model(data,h,c)
 
             output,h,c = output.data,h.data,c.data
 
@@ -420,19 +416,18 @@ def resetAdvIter(kwargsTr):
         kwargsTr["discrIter"] = None
     return kwargsTr
 
-def evalAllImages(exp_id,model_id,model,audioModel,testLoader,cuda,log_interval):
+def evalAllImages(exp_id,model_id,model,testLoader,cuda,log_interval):
     '''
     Pass all the images and/or the sound extracts of a loader in a feature model and save the feature vector in one csv for each image.
     Args:
     - exp_id (str): The experience id
     - model (nn.Module): the model to process the images
-    - audioModel (nn.Module): the model to process the sound extracts
     - testLoader (load_data.TestLoader): the image and/or sound loader
     - cuda (bool): True is the computation has to be done on cuda
     - log_interval (int): the number of batches to wait before logging progression
     '''
 
-    for batch_idx, (data,audio, _,vidName,frameInds) in enumerate(testLoader):
+    for batch_idx, (data, _,vidName,frameInds) in enumerate(testLoader):
 
         if (batch_idx % log_interval == 0):
             print("\t",testLoader.sumL+1,"/",testLoader.nbShots)
@@ -443,24 +438,10 @@ def evalAllImages(exp_id,model_id,model,audioModel,testLoader,cuda,log_interval)
             data = data[:,:len(frameInds)]
             data = data.view(data.size(0)*data.size(1),data.size(2),data.size(3),data.size(4))
 
-        if not audio is None:
-            if cuda:
-                audio = audio.cuda()
-            audio = audio[:,:len(frameInds)]
-            audio = audio.view(audio.size(0)*audio.size(1),audio.size(2),audio.size(3),audio.size(4))
-
         if not os.path.exists("../results/{}/{}".format(exp_id,vidName)):
             os.makedirs("../results/{}/{}".format(exp_id,vidName))
 
-        if (not audioModel is None) and (not model is None):
-            audioFeats = audioModel(audio)
-            feats = model(data)
-            feats = torch.cat((feats,audioFeats),dim=-1)
-        elif (not audioModel is None):
-            audioFeats = audioModel(audio)
-            feats = audioFeats
-        elif (not model is None):
-            feats = model(data)
+        feats = model(data)
         for i,feat in enumerate(feats):
             imageName = frameInds[i]
             if not os.path.exists("../results/{}/{}/{}_{}.csv".format(exp_id,vidName,imageName,model_id)):
@@ -476,8 +457,7 @@ def addInitArgs(argreader):
                 help='The path to the weight file to use to initialise the visual model')
     argreader.parser.add_argument('--init_path_visual_temp', type=str,metavar='SM',
                 help='The path to the weight file to use to initialise the visual and the temporal model')
-    argreader.parser.add_argument('--init_path_audio', type=str,metavar='SM',
-                help='The path to the weight file to use to initialise the audio model')
+
     return argreader
 def addLossArgs(argreader):
     argreader.parser.add_argument('--class_weight', type=float, metavar='CW',
@@ -575,7 +555,7 @@ def main(argv=None):
     if args.comp_feat:
 
         testLoader = load_data.TestLoader(args.val_l,args.dataset_test,args.test_part_beg,args.test_part_end,args.img_size,\
-                                          args.audio_len,args.resize_image,args.exp_id,args.random_frame_val)
+                                          args.resize_image,args.exp_id,args.random_frame_val)
 
         if args.feat != "None":
             featModel = modelBuilder.buildFeatModel(args.feat,args.pretrain_dataset,args.lay_feat_cut)
@@ -594,25 +574,8 @@ def main(argv=None):
         else:
             featModel = None
 
-        if args.feat_audio != "None":
-            audioFeatModel = modelBuilder.buildAudioFeatModel(args.feat_audio)
-            if args.cuda:
-                audioFeatModel = audioFeatModel.cuda()
-            if args.init_path_audio != "None":
-                audioFeatModel.load_state_dict(torch.load(args.init_path_audio))
-            elif args.init_path != "None":
-                model = modelBuilder.netBuilder(args)
-                params = torch.load(args.init_path)
-                state_dict = {k.replace("module.cnn.","cnn.module."): v for k,v in params.items()}
-                model.load_state_dict(state_dict)
-                audioFeatModel = model.audioFeatModel
-
-            audioFeatModel.eval()
-        else:
-            audioFeatModel = None
-
         with torch.no_grad():
-            evalAllImages(args.exp_id,args.model_id,featModel,audioFeatModel,testLoader,args.cuda,args.log_interval)
+            evalAllImages(args.exp_id,args.model_id,featModel,testLoader,args.cuda,args.log_interval)
 
     else:
 
@@ -621,16 +584,12 @@ def main(argv=None):
         if args.cuda:
             torch.cuda.manual_seed(args.seed)
 
-        if args.feat_audio != "None":
-            audioLen = args.audio_len
-        else:
-            audioLen = 0
         paramToOpti = []
 
-        trainLoader,trainDataset = load_data.buildSeqTrainLoader(args,audioLen)
+        trainLoader,trainDataset = load_data.buildSeqTrainLoader(args)
 
         valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
-                                            args.img_size,audioLen,args.resize_image,\
+                                            args.img_size,args.resize_image,\
                                             args.exp_id,args.random_frame_val)
 
         #Building the net

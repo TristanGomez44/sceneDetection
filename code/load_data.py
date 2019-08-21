@@ -82,13 +82,12 @@ class SeqTrDataset(torch.utils.data.Dataset):
     - lMin (int): the minimum length of a sequence during training
     - lMax (int): the maximum length of a sequence during training
     - imgSize (int): the size of each side of the image
-    - audioLen (int): the length of the audio extract for each shot
     - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
     - exp_id (str): the name of the experience
     - max_shots (int): the total number of shot to process before stopping the training epoch. The youtube_large dataset contains a million shots, which is why this argument is useful.
     '''
 
-    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,audioLen,resizeImage,exp_id,max_shots,avgSceneLen):
+    def __init__(self,dataset,propStart,propEnd,lMin,lMax,imgSize,resizeImage,exp_id,max_shots,avgSceneLen):
 
         super(SeqTrDataset, self).__init__()
 
@@ -98,7 +97,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         self.imgSize = imgSize
         self.lMin,self.lMax = lMin,lMax
         self.dataset = dataset
-        self.audioLen = audioLen
         self.nbShots = 0
         self.exp_id = exp_id
         self.avgSceneLen = avgSceneLen
@@ -204,7 +202,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
         video = pims.Video(self.videoPaths[vidInd])
 
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
-        self.preprocAudio = transforms.Compose([arrToExamp])
 
         #Building the frame sequence
         #This try/except block captures the error that raises when a frame index is too high.
@@ -215,15 +212,7 @@ class SeqTrDataset(torch.utils.data.Dataset):
             print(vidName,frameInds.max(),np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName)).max(),gt.max())
             sys.exit(0)
 
-        if self.audioLen > 0:
-            #Build the audio sequence
-            audioData, fs = sf.read(os.path.splitext(self.videoPaths[vidInd])[0]+".wav")
-            audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
-            audioSeq = audioSeq.unsqueeze(0).float()
-        else:
-            audioSeq = None
-
-        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName
+        return frameSeq.unsqueeze(0),torch.tensor(gt).float().unsqueeze(0),vidName
 
     def permuteScenes(self,gt):
         randScenePerm = np.random.permutation(int(gt.max()+1))
@@ -298,12 +287,11 @@ class TestLoader():
     - propStart (float): the proportion of the dataset at which to start using the videos. For example : propEnd=0.5 and propEnd=1 will only use the last half of the videos
     - propEnd (float): the proportion of the dataset at which to stop using the videos. For example : propEnd=0 and propEnd=0.5 will only use the first half of the videos
     - imgSize (tuple): a tuple containing (in order) the width and size of the image
-    - audioLen (int): the length of the audio extract for each shot
     - resizeImage (bool): a boolean to indicate if the image should be resized using cropping or not
     - exp_id (str): the name of the experience
     '''
 
-    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,audioLen,resizeImage,exp_id,randomFrame):
+    def __init__(self,evalL,dataset,propStart,propEnd,imgSize,resizeImage,exp_id,randomFrame):
         self.evalL = evalL
         self.dataset = dataset
 
@@ -319,7 +307,6 @@ class TestLoader():
         else:
             self.preproc = transforms.Compose([transforms.ToPILImage(),transforms.CenterCrop(imgSize),transforms.ToTensor(),normalize])
 
-        self.audioLen = audioLen
         self.nbShots =0
         for videoPath in self.videoPaths:
             videoFold = os.path.splitext(videoPath)[0]
@@ -358,20 +345,12 @@ class TestLoader():
             frameInds = np.array(frameInds.contiguous().view(-1))
 
         arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
-        self.preprocAudio = transforms.Compose([arrToExamp])
 
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
         except IndexError:
             print(vidName,"max frame",frameInds.max(),np.genfromtxt("../data/{}/{}/result.csv".format(self.dataset,vidName)).max())
             sys.exit(0)
-
-        if self.audioLen > 0:
-            audioData, fs = sf.read(os.path.splitext(videoPath)[0]+".wav")
-            audioSeq = torch.cat(list(map(lambda x:self.preprocAudio(readAudio(audioData,x,fps,fs,self.audioLen)).unsqueeze(0),np.array(frameInds))))
-            audioSeq = audioSeq.unsqueeze(0).float()
-        else:
-            audioSeq = None
 
         gt = getGT(self.dataset,vidName)[self.shotInd:min(self.shotInd+L,len(shotBounds))]
 
@@ -381,7 +360,7 @@ class TestLoader():
         else:
             self.shotInd += L
 
-        return frameSeq.unsqueeze(0),audioSeq,torch.tensor(gt).float().unsqueeze(0),vidName,torch.tensor(frameInds).int()
+        return frameSeq.unsqueeze(0),torch.tensor(gt).float().unsqueeze(0),vidName,torch.tensor(frameInds).int()
 
     def regularlySpacedFrames(self,shotBounds):
         ''' Select several frame indexs regularly spaced in each shot '''
@@ -390,10 +369,10 @@ class TestLoader():
 
         return frameInds
 
-def buildSeqTrainLoader(args,audioLen):
+def buildSeqTrainLoader(args):
 
     train_dataset = SeqTrDataset(args.dataset_train,args.train_part_beg,args.train_part_end,args.l_min,args.l_max,\
-                                        args.img_size,audioLen,args.resize_image,args.exp_id,args.max_shots,args.avg_scene_len)
+                                        args.img_size,args.resize_image,args.exp_id,args.max_shots,args.avg_scene_len)
     sampler = Sampler(len(train_dataset.videoPaths),train_dataset.nbShots,args.l_max)
     trainLoader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=args.batch_size,sampler=sampler, collate_fn=collateSeq, # use custom collate function here
                       pin_memory=False,num_workers=args.num_workers)
@@ -422,28 +401,6 @@ def findVideos(dataset,propStart,propEnd):
     videoPaths = np.array(videoPaths)[int(propStart*len(videoPaths)):int(propEnd*len(videoPaths))]
 
     return videoPaths
-
-def readAudio(audioData,i,fps,fs,audio_len):
-    ''' Select part of an audio track
-    Args:
-    - audioData (array) the full waveform
-    - i (int) the frame index at which the extract should be centered
-    - fps (int): the number of frams per second
-    - audio_len (float): the length of the audio extract, in seconds
-
-    Returns:
-    - fullArray (array): the audio extract
-
-    '''
-
-    time = float(i)/float(fps)
-    pos = time*fs
-    interv = audio_len*fs/2
-    sampleToWrite = audioData[int(round(pos-interv)):int(round(pos+interv)),:]
-    fullArray = np.zeros((int(round(pos+interv))-int(round(pos-interv)),sampleToWrite.shape[1]))
-    fullArray[:len(sampleToWrite)] = sampleToWrite
-
-    return fullArray
 
 def getGT(dataset,vidName):
     ''' For one video, returns a list of 0,1 indicating for each shot if it's the first shot of a scene or not.
@@ -520,8 +477,6 @@ def addArgs(argreader):
                         help='to resize the image to the size indicated by the img_width and img_heigth arguments.')
     argreader.parser.add_argument('--max_shots', type=int,metavar='NOTE',
                         help="The maximum number of shots to use during an epoch before validating")
-    argreader.parser.add_argument('--audio_len', type=float,metavar='NOTE',
-                        help="The length of the audio for each shot (in seconds)")
     argreader.parser.add_argument('--random_frame_val', type=args.str2bool, metavar='N',
                         help='If true, random frames instead of middle frames will be used as key frame during validation. ')
 
