@@ -133,6 +133,7 @@ dependencies:
   - torchvision=0.2.2=py_3
   - pims
   - pip:
+    - gdown==3.8.1
     - chardet==3.0.4
     - colorama==0.4.1
     - dask==1.2.0
