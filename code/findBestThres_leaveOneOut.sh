@@ -11,6 +11,4 @@ python processResults.py --exp_id $1 --dataset_test $2 $3 --model_id res50_res50
 python processResults.py --exp_id $1 --dataset_test $2 $3 --model_id res50_res50_siam0005_youtLarg_7 --eval_model_leave_one_out 151 0 1 --model_name "Res50-Res50 Siam. (Youtube-large)"
 python processResults.py --exp_id $1 --dataset_test $2 $3 --model_id res50_res50_d1_youtLarg_7       --eval_model_leave_one_out 202 0 1 --model_name "Res50-Res50 DT (Youtube-large)"
 python processResults.py --exp_id $1 --dataset_test $2 $3 --model_id res50_res50_advL1_slowDisc_youtLarg_7       --eval_model_leave_one_out 163 0 1 --model_name "Res50-Res50 Adv. Loss (Youtube-large)"
-
-
-
+python processResults.py --exp_id $1 --dataset_test $2 $3 --model_id res50_res50_biconvScoInitAtt_youtLarg_7     --eval_model_leave_one_out 462 0 1 --model_name "Res50-Res50 Deep-SA (Youtube-large)"
