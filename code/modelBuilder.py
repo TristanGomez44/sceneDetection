@@ -3,7 +3,6 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn import DataParallel
 import resnet
-import vggish
 
 import args
 

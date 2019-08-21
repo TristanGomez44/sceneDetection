@@ -9,7 +9,6 @@ import torch
 from torch.distributions.gamma import Gamma
 import numpy as np
 import cv2
-import soundfile as sf
 import shotdetect
 import pims
 import h5py

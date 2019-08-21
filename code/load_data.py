@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from torchvision import transforms
 import torchvision
-import vggish_input
 
-import soundfile as sf
+
+
 from PIL import Image
 
 import processResults
@@ -201,7 +201,6 @@ class SeqTrDataset(torch.utils.data.Dataset):
 
         video = pims.Video(self.videoPaths[vidInd])
 
-        arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
 
         #Building the frame sequence
         #This try/except block captures the error that raises when a frame index is too high.
@@ -344,7 +343,6 @@ class TestLoader():
             frameInds = frameInds.transpose(dim0=0,dim1=1)
             frameInds = np.array(frameInds.contiguous().view(-1))
 
-        arrToExamp = torchvision.transforms.Lambda(lambda x:torch.tensor(vggish_input.waveform_to_examples(x,fs)/32768.0))
 
         try:
             frameSeq = torch.cat(list(map(lambda x:self.preproc(video[x]).unsqueeze(0),np.array(frameInds))),dim=0)
