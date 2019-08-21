@@ -90,7 +90,7 @@ def binaryToAllMetrics(predBin,targetBin,lenPond=True):
 
     return {"IoU":iou,"IoU_pred":iou_pred,"IoU_gt":iou_gt,"F-score":f_score,"F-score New":f_score_new,"DED":ded}
 
-def coverage(gt,pred,lenPond=False):
+def coverage(gt,pred,lenPond=True):
     ''' Computes the coverage of a scene segmentation
 
     Args:
@@ -119,7 +119,7 @@ def coverage(gt,pred,lenPond=False):
     else:
         return cov_gt_array.mean()
 
-def overflow(gt,pred,lenPond=False):
+def overflow(gt,pred,lenPond=True):
     ''' Computes the overflow of a scene segmentation
 
     Args:
@@ -154,7 +154,7 @@ def overflow(gt,pred,lenPond=False):
     else:
         return ov_gt_array.mean()
 
-def overflow_new(gt,pred,lenPond=False):
+def overflow_new(gt,pred,lenPond=True):
     ''' Computes the new overflow of a scene segmentation
 
     Args:
