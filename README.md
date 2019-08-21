@@ -2,7 +2,7 @@
 
 This repo contains python scripts to train and evaluate a visio-temporal CNN to detect scene change.
 
-## Instalation
+## Installation
 
 First clone this git. Then install conda. Go to the root of the project and install the dependencies with the following command :
 
@@ -137,10 +137,10 @@ To evaluate a model on a specific dataset, for example a dataset which folder na
 
 ```
 python trainVal.py -c model.config --exp_id evalOVSD --model_id res50_res101 --train_part_beg 0 --train_part_end 0 \
-                                                                            --val_part_beg 0 --val_part_end 1 \
-                                                                            --dataset_val OVSD \
-                                                                            --epochs 157
-                                                                            --start_mode fine_tune --init_path ../models/trainExp/modelres50_res50_epoch157
+                                                                             --val_part_beg 0 --val_part_end 1 \
+                                                                             --dataset_val OVSD \
+                                                                             --epochs 157
+                                                                             --start_mode fine_tune --init_path ../models/trainExp/modelres50_res50_epoch157
 ```
 
 This will evaluate the model called "res50_res101" initialized with the weight found in "./models/trainExp/modelres50_res101_epoch157", on the dataset OVSD.
