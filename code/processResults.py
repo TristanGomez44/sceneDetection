@@ -23,6 +23,13 @@ import modelBuilder
 import metrics
 import utils
 
+import imageio
+
+from skimage import transform,io
+from skimage import img_as_ubyte
+
+import sys
+
 def evalModel_leaveOneOut(exp_id,model_id,model_name,dataset_test,epoch,firstThres,lastThres,lenPond):
     '''
     Evaluate a model. It requires the scores for each video to have been computed already with the trainVal.py script. Check readme to
@@ -429,6 +436,99 @@ def buildVideoNameDict(dataset_test,test_part_beg,test_part_end,resFilePaths):
 
     return videoNameDict
 
+def getResFile(exp_id,model_id,vidName):
+
+    resFilePaths = glob.glob("../results/{}/{}_epoch*_{}.csv".format(exp_id,model_id,vidName))
+    if len(resFilePaths) > 1:
+        raise ValueError("Too many file matching : ",resFilePaths)
+    if len(resFilePaths) == 0:
+        raise ValueError("Zero file matching : ","../results/{}/{}_epoch*_{}.csv".format(exp_id,model_id,vidName))
+
+    resFilePath = resFilePaths[0]
+    resFile = np.genfromtxt(resFilePath,delimiter=" ")
+
+    return resFile
+
+def makeGif(exp_id,model_id1,model_id2,model_name1,model_name2,dataset_test,maxFrame=50):
+
+    font                   = cv2.FONT_HERSHEY_SIMPLEX
+    fontScale              = 0.5
+    fontColorModel              = (0,0,255)
+    fontColorGT              = (255,0,0)
+    lineType               = 2
+
+    imgSize = 216,384
+
+    vidPaths = load_data.findVideos(dataset_test,0,1)
+    for vidPath in vidPaths:
+
+        vidFileName = os.path.basename(vidPath)
+        vidName = os.path.splitext(vidFileName)[0]
+
+        print(vidName)
+        resFile1 = getResFile(exp_id,model_id1,vidName)
+        resFile2 = getResFile(exp_id,model_id2,vidName)
+
+        vid = pims.Video(vidPath)
+
+        images = []
+
+        gt = load_data.getGT(dataset_test,vidName)
+
+        with imageio.get_writer('../vis/{}/{}_{}_{}.gif'.format(exp_id,model_id1,model_id2,vidName), mode='I',duration=1,subrectangles=True,palettesize=128) as writer:
+
+            i=0
+            sceneInd1,sceneInd2 = 1,1
+            trueSceneInd = 1
+
+            while i<len(resFile1) and i<maxFrame:
+
+                if i%10==0:
+                    print("\t",i,"/",len(resFile1))
+
+                frameInd,score1 = resFile1[i]
+                _,score2 = resFile2[i]
+
+                frame = vid[frameInd]
+                frame = transform.resize(frame, imgSize,anti_aliasing=True,mode="constant")
+
+                frameWithCaption = np.ones((frame.shape[0]+90,frame.shape[1],3))*255
+                frameWithCaption[:frame.shape[0]] = (frame*255).astype("uint8")
+
+                if score1>0.5:
+                    sceneInd1 += 1
+                if score2>0.5:
+                    sceneInd2 += 1
+                if gt[i] == 1:
+                    trueSceneInd += 1
+
+                bottomLeftCornerOfText = (frameWithCaption.shape[0]//4,frameWithCaption.shape[1]//2+50)
+
+                writeText('{} : scene {}'.format(model_name1,sceneInd1),frameWithCaption,bottomLeftCornerOfText,font,fontScale,fontColorModel,lineType,row="model1")
+                writeText('{} : scene {}'.format(model_name2,sceneInd2),frameWithCaption,bottomLeftCornerOfText,font,fontScale,fontColorModel,lineType,row="model2")
+                writeText('GT : scene {}'.format(trueSceneInd),frameWithCaption,bottomLeftCornerOfText,font,fontScale,fontColorGT,lineType,row="gt")
+
+                writer.append_data(img_as_ubyte(frameWithCaption.astype("uint8")))
+
+                i+=1
+
+def writeText(text,frameWithCaption,bottomLeftCornerOfText,font,fontScale,fontColor,lineType,row="model1"):
+
+    if row == "model1":
+        bottomLeftCornerOfText = bottomLeftCornerOfText[0],bottomLeftCornerOfText[1]+25
+    if row == "model2":
+        bottomLeftCornerOfText = bottomLeftCornerOfText[0],bottomLeftCornerOfText[1]+50
+
+    frameWithCaption = cv2.putText(frameWithCaption,text,
+                                   bottomLeftCornerOfText,
+                                   font,
+                                   fontScale,
+                                   fontColor,
+                                   lineType)
+
+    return frameWithCaption
+
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -460,6 +560,16 @@ def main(argv=None):
 
     argreader.parser.add_argument('--fine_tuned_thres',action="store_true",help='To automatically fine tune the decision threshold of the model. Only useful for the --bbc_annot_dist arg. \
                                                                                 Check the help of this arg.')
+
+    ######### Make a gif out of predictions ################
+
+    argreader.parser.add_argument('--gif',action="store_true",help='Make a gif out of the predictions of a model on one dataset.')
+
+    argreader.parser.add_argument('--model_id1',type=str,metavar="ID",help='The id of the first model to plot with --gif')
+    argreader.parser.add_argument('--model_id2',type=str,metavar="ID",help='The id of the second model to plot with --gif')
+    argreader.parser.add_argument('--model_name1',type=str,metavar="NAME",help='The name of the first model to plot with --gif')
+    argreader.parser.add_argument('--model_name2',type=str,metavar="NAME",help='The name of the second model to plot with --gif')
+
     argreader = load_data.addArgs(argreader)
 
     #Reading the comand line arg
@@ -477,6 +587,7 @@ def main(argv=None):
         thresMin = args.eval_model_leave_one_out[1]
         thresMax = args.eval_model_leave_one_out[2]
         evalModel_leaveOneOut(args.exp_id,args.model_id,args.model_name,args.dataset_test,epoch,thresMin,thresMax,args.len_pond)
-
+    if args.gif:
+        makeGif(args.exp_id,args.model_id1,args.model_id2,args.model_name1,args.model_name2,args.dataset_test)
 if __name__ == "__main__":
     main()
