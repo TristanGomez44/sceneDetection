@@ -28,6 +28,7 @@ import metrics
 import utils
 import lossTerms
 import update
+import radam
 
 def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
     ''' Train a model during one epoch
@@ -338,7 +339,10 @@ def get_OptimConstructor_And_Kwargs(optimStr,momentum):
         the constructor of the choosen optimiser and the apropriate keyword dictionnary
     '''
 
-    if optimStr != "AMSGrad":
+    if optimStr == "RAdam":
+        optimConst = radam.RAdam
+        kwargs = {}
+    elif optimStr != "AMSGrad":
         optimConst = getattr(torch.optim,optimStr)
         if optimStr == "SGD":
             kwargs= {'momentum': momentum}
