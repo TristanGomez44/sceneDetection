@@ -165,7 +165,7 @@ class CNN_sceneDet(nn.Module):
     '''
 
     def __init__(self,modelType,pool="mean",multiGPU=False,scoreConvWindSize=1,\
-                scoreConvChan=8,scoreConvBiLay=False,scoreConvAtt=False):
+                scoreConvChan=8,scoreConvBiLay=False,scoreConvAtt=False,convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -174,7 +174,8 @@ class CNN_sceneDet(nn.Module):
         else:
             expansion = 1
 
-        self.cnn = getattr(resnet,modelType)(pretrained=True,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True)
+        self.cnn = getattr(resnet,modelType)(pretrained=pretrainedTempMod,maxPoolKer=(1,3),maxPoolPad=(0,1),stride=(1,2),featMap=True,\
+                                                convKer=(convKerFeatDim,3),firstConvKer=(firstConvKerFeatDim,7))
 
         if multiGPU:
             self.cnn = DataParallel(self.cnn,dim=0)
@@ -239,7 +240,8 @@ class SceneDet(nn.Module):
     '''
 
     def __init__(self,temp_model="resnet50",featModelName="resnet50",hiddenSize=1024,layerNb=2,dropout=0.5,cuda=True,multiGPU=False,\
-                        poolTempMod="mean",scoreConvWindSize=1,scoreConvChan="8",scoreConvBiLay=False,scoreConvAtt=False):
+                        poolTempMod="mean",scoreConvWindSize=1,scoreConvChan="8",scoreConvBiLay=False,scoreConvAtt=False,\
+                        convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True):
 
         super(SceneDet,self).__init__()
 
@@ -260,7 +262,8 @@ class SceneDet(nn.Module):
             self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout)
         elif self.temp_model.find("net") != -1:
             self.tempModel = CNN_sceneDet(self.temp_model,poolTempMod,multiGPU,scoreConvWindSize=scoreConvWindSize,\
-                                            scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,scoreConvAtt=scoreConvAtt)
+                                        scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,scoreConvAtt=scoreConvAtt,\
+                                        convKerFeatDim=convKerFeatDim,firstConvKerFeatDim=firstConvKerFeatDim,pretrainedTempMod=pretrainedTempMod)
 
         self.nb_gpus = torch.cuda.device_count()
 
@@ -320,7 +323,7 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.hidden_size,args.num_layers,args.dropout,\
                     args.cuda,args.multi_gpu,args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,\
-                    args.score_conv_attention)
+                    args.score_conv_attention,args.temp_mod_conv_ker_feat_dim,args.temp_mod_first_conv_ker_feat_dim,args.pretrained_temp_mod)
 
     return net
 
@@ -340,6 +343,13 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--score_conv_attention', type=args.str2bool, metavar='N',
                         help='To apply the score convolution(s) as an attention layer.')
+
+    argreader.parser.add_argument('--temp_mod_conv_ker_feat_dim', type=int, metavar='N',
+                        help='The kernel size of the conv blocks in the feature dimension for the resnet temp mod.')
+    argreader.parser.add_argument('--temp_mod_first_conv_ker_feat_dim', type=int, metavar='N',
+                        help='The kernel size of the first convolution in the feature dimension for the resnet temp mod.')
+    argreader.parser.add_argument('--pretrained_temp_mod', type=args.str2bool, metavar='N',
+                        help='To have a pretrained resnet temporal model.')
 
     argreader.parser.add_argument('--score_conv_chan', type=int, metavar='N',
                         help='The number of channel of the score convolution layer (used only if --score_conv_bilay is True)')
