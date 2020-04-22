@@ -165,7 +165,7 @@ class CNN_sceneDet(nn.Module):
     '''
 
     def __init__(self,modelType,pool="mean",multiGPU=False,scoreConvWindSize=1,\
-                scoreConvChan=8,scoreConvBiLay=False,scoreConvAtt=False,convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True):
+                scoreConvChan=8,scoreConvBiLay=False,scoreConvAtt=False,convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True,iou_mode=False):
 
         super(CNN_sceneDet,self).__init__()
 
@@ -195,6 +195,8 @@ class CNN_sceneDet(nn.Module):
         if self.pool == 'linear':
             self.endLin = nn.Linear(chan*8*self.featNb*expansion,1)
 
+        self.iou_mode = iou_mode
+
     def forward(self,x,gt=None,attList=None):
 
         x = self.cnn(x)
@@ -208,6 +210,7 @@ class CNN_sceneDet(nn.Module):
                 x = self.scoreConv(x.unsqueeze(1)).squeeze(1)
 
             x = torch.sigmoid(x)
+
         elif self.pool == "linear":
 
             origSize = x.size()
@@ -220,11 +223,16 @@ class CNN_sceneDet(nn.Module):
                 x = self.scoreConv(x.unsqueeze(1)).squeeze(1)
 
             x = torch.sigmoid(x)
+
         else:
             raise ValueError("Unkown pool mode for CNN temp model {}".format(self.pool))
 
-        return x
-
+        if self.iou_mode:
+            deriv_x = torch.cat((torch.zeros(x.size(0),1).to(x.device),x[:,1:]-x[:,:-1]),dim=-1)
+            deriv_x = torch.abs(deriv_x)
+            return deriv_x,x
+        else:
+            return x
 class SceneDet(nn.Module):
     ''' This module combines a feature extractor to represent each shot and a temporal model to compute the scene change score for each shot
 
@@ -241,13 +249,15 @@ class SceneDet(nn.Module):
 
     def __init__(self,temp_model="resnet50",featModelName="resnet50",hiddenSize=1024,layerNb=2,dropout=0.5,cuda=True,multiGPU=False,\
                         poolTempMod="mean",scoreConvWindSize=1,scoreConvChan="8",scoreConvBiLay=False,scoreConvAtt=False,\
-                        convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True):
+                        convKerFeatDim=3,firstConvKerFeatDim=7,pretrainedTempMod=True,iou_mode=False):
 
         super(SceneDet,self).__init__()
+
 
         self.featModel = buildFeatModel(featModelName)
 
         if multiGPU:
+
             self.featModel = DataParallel(self.featModel,dim=0)
 
         self.temp_model = temp_model
@@ -258,14 +268,18 @@ class SceneDet(nn.Module):
         else:
             self.nbFeat = 64*2**(4-1)
 
+
         if self.temp_model == "RNN":
             self.tempModel = LSTM_sceneDet(self.nbFeat,hiddenSize,layerNb,dropout)
         elif self.temp_model.find("net") != -1:
+
             self.tempModel = CNN_sceneDet(self.temp_model,poolTempMod,multiGPU,scoreConvWindSize=scoreConvWindSize,\
                                         scoreConvChan=scoreConvChan,scoreConvBiLay=scoreConvBiLay,scoreConvAtt=scoreConvAtt,\
-                                        convKerFeatDim=convKerFeatDim,firstConvKerFeatDim=firstConvKerFeatDim,pretrainedTempMod=pretrainedTempMod)
+                                        convKerFeatDim=convKerFeatDim,firstConvKerFeatDim=firstConvKerFeatDim,pretrainedTempMod=pretrainedTempMod,\
+                                        iou_mode=iou_mode)
 
         self.nb_gpus = torch.cuda.device_count()
+
 
     def forward(self,x,h=None,c=None,gt=None):
         ''' The forward pass of the scene change model
@@ -323,7 +337,8 @@ def netBuilder(args):
 
     net = SceneDet(args.temp_model,args.feat,args.hidden_size,args.num_layers,args.dropout,\
                     args.cuda,args.multi_gpu,args.pool_temp_mod,args.score_conv_wind_size,args.score_conv_chan,args.score_conv_bilay,\
-                    args.score_conv_attention,args.temp_mod_conv_ker_feat_dim,args.temp_mod_first_conv_ker_feat_dim,args.pretrained_temp_mod)
+                    args.score_conv_attention,args.temp_mod_conv_ker_feat_dim,args.temp_mod_first_conv_ker_feat_dim,args.pretrained_temp_mod,\
+                    args.iou_mode)
 
     return net
 
@@ -371,5 +386,9 @@ def addArgs(argreader):
 
     argreader.parser.add_argument('--discr_dropout', type=args.str2bool, metavar='S',
                         help='To apply dropout on the discriminator (only useful when using adversarial loss term)')
+
+    argreader.parser.add_argument('--iou_mode', type=args.str2bool, metavar='S',
+                        help='To output the necessary tensor to compute the soft iou.')
+
 
     return argreader

@@ -70,7 +70,12 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
 
             #Computing predictions
             if args.temp_model.find("net") != -1:
-                output = model(data)
+
+                if args.iou_mode:
+                    output,iou_output = model(data)
+                else:
+                    output = model(data)
+                    iou_output = None
             else:
                 output,_ = model(data)
 
@@ -80,12 +85,13 @@ def epochSeqTr(model,optim,log_interval,loader, epoch, args,writer,**kwargs):
             target = target[:,args.train_step_to_ignore:target.size(1)-args.train_step_to_ignore]
 
             weights = getWeights(target,args.class_weight)
-            loss = F.binary_cross_entropy(output, target,weight=weights)
+            loss = args.nll_weight*F.binary_cross_entropy(output, target,weight=weights)
 
             #Adding loss term
             loss = lossTerms.addDistTerm(loss,args,output,target)
             loss,discMeanAcc = lossTerms.addAdvTerm(loss,args,model.features,model.featModel,kwargs["discrModel"],kwargs["discrIter"],kwargs["discrOptim"])
             loss,distPos,distNeg = lossTerms.addSiamTerm(loss,args,model.features,target)
+            loss = -lossTerms.addIoUTerm(loss,args,iou_output,target)
 
             loss.backward()
             optim.step()
@@ -169,7 +175,7 @@ def epochSeqVal(model,log_interval,loader, epoch, args,writer,metricEarlyStop,me
 
         if args.temp_model.find("net") != -1:
             output = model.computeFeat(data).data
-
+            print(vidName)
         else:
             if newVideo:
                 output,(h,c) = model(data)
@@ -243,6 +249,8 @@ def computeScore(model,allFeats,allTarget,valLTemp,poolTempMod,vidName):
     for i in range(len(chunkList)):
 
         output = model.computeScore(chunkList[i])
+        if type(output) is tuple:
+            output = output[0]
 
         if allOutput is None:
             allOutput = output
@@ -385,7 +393,7 @@ def initialize_Net_And_EpochNumber(net,exp_id,model_id,cuda,start_mode,init_path
 
 
         if init_path != "None":
-            params = torch.load(init_path)
+            params = torch.load(init_path,map_location=torch.device('cpu') if not cuda else torch.device("cuda0"))
 
             state_dict = {k.replace("module.cnn.","cnn.module.").replace("scoreConv.weight","scoreConv.layers.weight").replace("scoreConv.bias","scoreConv.layers.bias"): v for k,v in params.items()}
 
@@ -464,6 +472,10 @@ def addInitArgs(argreader):
 
     return argreader
 def addLossArgs(argreader):
+
+    argreader.parser.add_argument('--nll_weight', type=float, metavar='NLLWEIGHT',
+                        help='The weight of the nll likelihoos term.')
+
     argreader.parser.add_argument('--class_weight', type=float, metavar='CW',
                         help='Set the importance of balancing according to class instance number in the loss function. 0 makes equal weights and 1 \
                         makes weights proportional to the class instance number of the other class.')
@@ -487,6 +499,9 @@ def addLossArgs(argreader):
 
     argreader.parser.add_argument('--siam_nb_samples', type=int,metavar='DW',
                         help="The number of feature pairs to build at each batch.")
+
+    argreader.parser.add_argument('--iou_weight', type=float,metavar='FLOAT',
+                        help="The weight of the IoU term.")
 
     return argreader
 def addOptimArgs(argreader):
@@ -590,6 +605,7 @@ def main(argv=None):
 
         paramToOpti = []
 
+
         trainLoader,trainDataset = load_data.buildSeqTrainLoader(args)
 
         valLoader = load_data.TestLoader(args.val_l,args.dataset_val,args.val_part_beg,args.val_part_end,\
@@ -599,8 +615,10 @@ def main(argv=None):
         #Building the net
         net = modelBuilder.netBuilder(args)
 
+
         if args.cuda:
             net = net.cuda()
+
 
         trainFunc = epochSeqTr
         valFunc = epochSeqVal
