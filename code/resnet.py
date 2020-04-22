@@ -28,10 +28,15 @@ def conv3x3(in_planes, out_planes, stride=1,dilation=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1+(dilation-1), bias=False,dilation=dilation)
 
-def convKxK(in_planes, out_planes, stride=1,dilation=1,k=(3,3)):
+def convKxK(in_planes, out_planes, stride=1,dilation=1,k=(3,3),padding=True):
     """3x3 convolution with padding"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=k, stride=stride,
+
+    if padding:
+        return nn.Conv2d(in_planes, out_planes, kernel_size=k, stride=stride,
                      padding=(k[0]//2+(dilation-1),k[1]//2+(dilation-1)), bias=False,dilation=dilation)
+    else:
+        return nn.Conv2d(in_planes, out_planes, kernel_size=k, stride=stride,
+                     padding=((dilation-1),(dilation-1)), bias=False,dilation=dilation)
 
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
@@ -86,6 +91,13 @@ class Bottleneck(nn.Module):
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, planes)
         self.bn1 = norm_layer(planes)
+
+        #if convKer[0] == 1:
+        #    self.conv2 = convKxK(planes, planes, stride=1,dilation,k=convKer)
+        #    self.linLay = nn.Linear()
+        #else:
+        #    self.conv2 = convKxK(planes, planes, stride,dilation,k=convKer)
+
         self.conv2 = convKxK(planes, planes, stride,dilation,k=convKer)
         self.bn2 = norm_layer(planes)
         self.conv3 = conv1x1(planes, planes * self.expansion)
@@ -201,6 +213,18 @@ class ResNet(nn.Module):
 
         return x
 
+def load_state_dict(model,type):
+    params = model_zoo.load_url(model_urls[type])
+    paramsToLoad = {}
+    for key in params:
+        if key in model.state_dict() and model.state_dict()[key].size() == params[key].size():
+            paramsToLoad[key] = params[key]
+
+    res = model.load_state_dict(paramsToLoad,strict=False)
+    if not res is None:
+        print(res)
+    return model
+
 def resnet18(pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.
     Args:
@@ -208,7 +232,7 @@ def resnet18(pretrained=False, **kwargs):
     """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
+        model = load_state_dict(model,'resnet18')
     return model
 
 
@@ -219,7 +243,7 @@ def resnet34(pretrained=False, **kwargs):
     """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
+        model = load_state_dict(model,'resnet34')
     return model
 
 
@@ -230,7 +254,7 @@ def resnet50(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
+        model = load_state_dict(model,'resnet50')
     return model
 
 
@@ -241,7 +265,7 @@ def resnet101(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
+        model = load_state_dict(model,'resnet101')
     return model
 
 
@@ -252,5 +276,5 @@ def resnet152(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
+        model = load_state_dict(model,'resnet152')
     return model
